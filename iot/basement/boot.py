@@ -3,7 +3,7 @@ import time
 import webrepl
 import config
 
-# Konfiguracja sieci
+# Network config
 SSID = config.SSID
 PASSWORD = config.PASSWORD
 
@@ -11,15 +11,15 @@ station = network.WLAN(network.STA_IF)
 station.active(True)
 
 if not station.isconnected():
-    print("Łączenie z siecią WiFi...")
+    print("Connecting to WiFi...")
     station.connect(SSID, PASSWORD)
-    
-    # Czekamy na połączenie
+
+    # Wait for connection
     while not station.isconnected():
         time.sleep(1)
 
-print("Połączono z WiFi!")
-print("Adres IP urządzenia:", station.ifconfig()[0])
+print("Connected to WiFi!")
+print("Device IP:", station.ifconfig()[0])
 
-# Uruchomienie serwera OTA
+# Start OTA server
 webrepl.start()

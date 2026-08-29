@@ -6,130 +6,135 @@ import urequests
 import ntptime
 import config
 
-# --- KONFIGURACJA POGODY ---
+# --- WEATHER CONFIG ---
 API_KEY = config.API_KEY
 CITY = config.CITY
 WEATHER_URL = f"http://api.openweathermap.org/data/2.5/weather?q={CITY}&appid={API_KEY}&units=metric"
 
-# --- KONFIGURACJA KLIMATU ---
-THRESHOLD_ON = 60.0      # Zwykły próg włączenia
-THRESHOLD_OFF = 50.0     # Próg wyłączenia (histereza)
-EMERGENCY_RH = 75.0      # Twardy próg zalania/awarii
+# --- CLIMATE CONFIG ---
+THRESHOLD_ON = 60.0      # Fan turn-on threshold
+THRESHOLD_OFF = 50.0     # Fan turn-off threshold (hysteresis)
+EMERGENCY_RH = 75.0      # Hard flood/failure threshold
 
-# --- KONFIGURACJA DASHBOARDU (API BACKEND) ---
-ENABLE_DASHBOARD = False # Zmień na True, gdy postawisz serwer FastAPI/Django
+# --- DASHBOARD (BACKEND API) CONFIG ---
+ENABLE_DASHBOARD = True
 DASHBOARD_URL = config.DASHBOARD_URL
 
-# --- INICJALIZACJA SPRZĘTU ---
+# --- HARDWARE INIT ---
 i2c = I2C(0, scl=Pin(22), sda=Pin(21))
 bme = bme280.BME280(i2c=i2c)
 relay = Pin(19, Pin.OUT)
 relay.value(0)
 
-# Synchronizacja czasu
+# Time sync
 try:
-    print("Synchronizacja czasu z internetem...")
+    print("Syncing time from internet...")
     ntptime.settime()
 except Exception as e:
-    print(f"Błąd synchronizacji czasu NTP: {e}")
+    print(f"NTP time sync error: {e}")
 
-# Zmienne sterujące
+# Control variables
 last_api_check = 0
-api_interval = 900  # 900 sekund = 15 minut
-ext_ah = None       
+api_interval = 900  # 900 seconds = 15 minutes
+ext_ah = None
 
 def calculate_ah(temp, rh):
-    """Oblicza wilgotność bezwzględną (g/m3) z równania Magnusa"""
+    """Calculate absolute humidity (g/m3) from Magnus equation"""
     es = 6.112 * math.exp((17.67 * temp) / (243.5 + temp))
     e = es * (rh / 100.0)
-    # Poprawiony mnożnik: 216.74 zamiast 2.1674 * 1000 dla uniknięcia błędów skali
+    # Corrected multiplier: 216.74 instead of 2.1674 * 1000 to avoid scale errors
     return (e * 216.74) / (273.15 + temp)
 
 def fetch_external_ah():
-    """Pobiera pogodę z API. Zwraca wartość lub None przy błędzie."""
+    """Fetch weather from API. Returns value or None on error."""
     try:
         response = urequests.get(WEATHER_URL)
         data = response.json()
         response.close()
-        
+
         if 'main' not in data:
-            print(f"\n[API ODRZUCONE] Brak klucza 'main' (Prawdopodobnie 401).")
+            print(f"\n[API REJECTED] Missing 'main' key (likely 401).")
             return None
-            
+
         ext_temp = data['main']['temp']
         ext_rh = data['main']['humidity']
         ah = calculate_ah(ext_temp, ext_rh)
-        print(f"\n[API ZAKTUALIZOWANE] Zewnątrz: {ext_temp:.1f}°C, {ext_rh}% RH -> {ah:.2f} g/m3")
+        print(f"\n[API UPDATED] Outside: {ext_temp:.1f}C, {ext_rh}% RH -> {ah:.2f} g/m3")
         return ah
     except Exception as e:
-        print(f"\n[API BŁĄD] Wyjątek połączenia: {e}")
+        print(f"\n[API ERROR] Connection exception: {e}")
         return None
 
 def should_ventilate(int_temp, int_rh, ext_ah_value):
-    """Zwraca krotkę: (Czy_włączyć_wiatrak, "Powód / Tryb")"""
+    """Return tuple: (should_turn_on_fan, "Reason / Mode")"""
     if int_rh >= EMERGENCY_RH:
-        return True, "AWARYJNY (Zalanie)"
-        
+        return True, "EMERGENCY (Flood)"
+
     if int_rh <= THRESHOLD_ON and relay.value() == 0:
-        return False, "CZUWANIE (W normie)"
-        
+        return False, "STANDBY (Normal)"
+
     int_ah = calculate_ah(int_temp, int_rh)
-    
+
     if ext_ah_value is not None:
         if ext_ah_value < int_ah:
-            return True, "API (Z zewnątrz suche)"
+            return True, "API (Outside dry)"
         else:
-            return False, "API (Z zewnątrz mokre)"
-            
-    # GUARD: Awaria API, przechodzimy na kalendarz
+            return False, "API (Outside wet)"
+
+    # GUARD: API failure, fall back to calendar
     current_month = time.localtime()[1]
-    
+
     if time.localtime()[0] <= 2000:
-        return False, "GUARD (Brak czasu NTP)"
+        return False, "GUARD (No NTP time)"
 
     if current_month in [11, 12, 1, 2, 3, 4]:
-        return True, "GUARD (Zima)"
+        return True, "GUARD (Winter)"
     else:
-        return False, "GUARD (Lato)"
+        return False, "GUARD (Summer)"
 
 def send_to_dashboard(payload):
-    """Wysyła payload do Twojego serwera i zamyka gniazdo"""
+    """Send payload to your server and close the socket"""
     try:
-        response = urequests.post(DASHBOARD_URL, json=payload)
-        # Opcjonalnie: print(f"Dashboard status: {response.status_code}")
-        response.close() # Krytyczne: urequests łatwo zapycha pamięć RAM bez .close()
+        import ujson
+        # Encode to UTF-8 bytes - urequests computes Content-Length from len(str),
+        # and multibyte characters would undercount the length and truncate the JSON.
+        body = ujson.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        response = urequests.post(DASHBOARD_URL, data=body, headers=headers)
+        print("[DASHBOARD] status:", response.status_code)
+        response.close() # Critical: urequests easily exhausts RAM without .close()
     except Exception as e:
-        print(f"[DASHBOARD BŁĄD] Nie można wysłać danych: {e}")
+        print(f"[DASHBOARD ERROR] Could not send data: {e}")
 
-print("\n>>> System Klimatyczny v3.0 (IoT Edition) gotowy <<<")
+print("\n>>> Climate System v3.0 (IoT Edition) ready <<<")
 
 while True:
     try:
         current_time = time.time()
-        
-        # Odśwież dane z zewnątrz co 15 minut
+
+        # Refresh external data every 15 minutes
         if last_api_check == 0 or (current_time - last_api_check) > api_interval:
             ext_ah = fetch_external_ah()
             last_api_check = current_time
 
-        # Odczyt z piwnicy
+        # Read from basement
         temp = bme.temperature()
         press = bme.pressure()
         hum = bme.humidity()
-        
-        # Logika decyzyjna
+
+        # Decision logic
         vent_decision, mode_reason = should_ventilate(temp, hum, ext_ah)
-        
-        # Obsługa wiatraka z histerezą
+
+        # Fan control with hysteresis
         if vent_decision and hum > THRESHOLD_ON and relay.value() == 0:
             relay.value(1)
         elif (not vent_decision or hum < THRESHOLD_OFF) and relay.value() == 1:
             relay.value(0)
-            
-        stan_wentylatora = "ON" if relay.value() == 1 else "OFF"
-        print(f"[PIWNICA] T: {temp:.2f}°C | RH: {hum:.2f}% | Ciś: {press:.1f}hPa | Wiatrak: {stan_wentylatora} | Tryb: {mode_reason}")
-        
-        # --- SEKCJA DASHBOARDU ---
+
+        fan_state = "ON" if relay.value() == 1 else "OFF"
+        print(f"[BASEMENT] T: {temp:.2f}C | RH: {hum:.2f}% | P: {press:.1f}hPa | Fan: {fan_state} | Mode: {mode_reason}")
+
+        # --- DASHBOARD SECTION ---
         if ENABLE_DASHBOARD:
             payload = {
                 "timestamp": current_time,
@@ -142,10 +147,10 @@ while True:
                 "mode": mode_reason
             }
             send_to_dashboard(payload)
-            
-        # Pętla wykonuje się co 5 sekund (jeśli wysyłasz na backend, rozważ wydłużenie np. do 15 lub 30s)
-        time.sleep(5) 
-        
+
+        # Loop runs every 5 seconds (if sending to backend, consider raising to 15 or 30s)
+        time.sleep(5)
+
     except Exception as e:
-        print(f"Błąd głównej pętli: {e}")
+        print(f"Main loop error: {e}")
         time.sleep(5)
