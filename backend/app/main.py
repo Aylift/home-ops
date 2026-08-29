@@ -1,4 +1,6 @@
+import os
 import sys
+from pathlib import Path
 from typing import Optional
 
 # Windows console cp1252 can't encode Polish chars (ą) in mode field.
@@ -9,7 +11,8 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 app = FastAPI(title="Home Ops API")
@@ -31,6 +34,7 @@ class Telemetry(BaseModel):
     ah_outside: Optional[float] = None
     fan_active: bool
     mode: str
+    action: Optional[str] = None
 
 
 @app.exception_handler(RequestValidationError)
@@ -44,13 +48,21 @@ async def validation_handler(request: Request, exc):
 # In-memory store of the latest telemetry sample
 latest_telemetry = None
 
+# Rolling log of major events (fan on/off, emergencies), newest first
+actions = []
+MAX_ACTIONS = 20
+
 
 @app.post("/api/telemetry")
 async def receive_telemetry(payload: Telemetry):
     global latest_telemetry
-    latest_telemetry = payload.model_dump()
-    print(f"[TELEMETRY] {latest_telemetry}")
-    return {"status": "ok", "received": latest_telemetry}
+    data = payload.model_dump()
+    latest_telemetry = data
+    if data.get("action"):
+        actions.insert(0, {"timestamp": data["timestamp"], "action": data["action"]})
+        del actions[MAX_ACTIONS:]
+    print(f"[TELEMETRY] {data}")
+    return {"status": "ok", "received": data}
 
 
 @app.get("/api/telemetry/latest")
@@ -60,6 +72,26 @@ async def get_latest_telemetry():
     return latest_telemetry
 
 
+@app.get("/api/actions")
+async def get_actions(limit: int = 5):
+    return actions[:limit]
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# --- Frontend static hosting ---
+# Serve the built Vue app from frontend/dist so the whole dashboard + API live
+# on one port (http://<host-ip>:8001), reachable from any device on the LAN.
+FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if FRONTEND_DIST.is_dir():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        file = FRONTEND_DIST / full_path
+        if full_path and file.is_file():
+            return FileResponse(file)
+        return FileResponse(FRONTEND_DIST / "index.html")

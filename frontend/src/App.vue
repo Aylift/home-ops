@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
-import { RefreshCw, Fan, Thermometer, Droplets, Gauge, Wind } from '@lucide/vue'
+import { RefreshCw, Fan, Thermometer, Droplets, Gauge, Wind, History } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -10,9 +10,11 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8001'
+// Same-origin when served by the backend; override with VITE_API_URL for dev.
+const API = import.meta.env.VITE_API_URL || ''
 
 const telemetry = ref(null)
+const actions = ref([])
 const error = ref('')
 const loading = ref(false)
 
@@ -20,9 +22,13 @@ async function fetchLatest() {
   loading.value = true
   error.value = ''
   try {
-    const res = await fetch(`${API}/api/telemetry/latest`)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    telemetry.value = await res.json()
+    const [tRes, aRes] = await Promise.all([
+      fetch(`${API}/api/telemetry/latest`),
+      fetch(`${API}/api/actions?limit=5`),
+    ])
+    if (!tRes.ok) throw new Error(`HTTP ${tRes.status}`)
+    telemetry.value = await tRes.json()
+    if (aRes.ok) actions.value = await aRes.json()
   } catch (e) {
     error.value = e.message
   } finally {
@@ -39,7 +45,7 @@ onUnmounted(() => clearInterval(timer))
 
 function fmtTime(ts) {
   if (!ts) return '—'
-  return new Date(ts * 1000).toLocaleTimeString()
+  return new Date(ts * 1000).toLocaleString()
 }
 
 const metrics = [
@@ -97,6 +103,29 @@ const metrics = [
           </CardContent>
         </Card>
       </div>
+
+      <!-- Recent actions -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <History class="size-4" />
+            Recent actions
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ul v-if="actions.length" class="space-y-2">
+            <li
+              v-for="(a, i) in actions"
+              :key="i"
+              class="flex items-center justify-between border-b pb-2 text-sm last:border-0 last:pb-0"
+            >
+              <span>{{ a.action }}</span>
+              <span class="text-muted-foreground text-xs">{{ fmtTime(a.timestamp) }}</span>
+            </li>
+          </ul>
+          <p v-else class="text-muted-foreground text-sm">No major events yet.</p>
+        </CardContent>
+      </Card>
 
       <p v-if="!telemetry && !error" class="text-muted-foreground text-sm">
         Waiting for telemetry…

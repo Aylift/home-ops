@@ -12,8 +12,18 @@ IoT basement climate control: an ESP32 (MicroPython) sensor node streams telemet
 
 1. Copy `.env.template` → `.env` and fill in `ESP_IP`, `WEBREPL_PASS`.
 2. Copy `iot/basement/config.template.py` → `iot/basement/config.py` and fill in WiFi, weather API, and `DASHBOARD_URL`.
-3. Backend: `cd backend && .\.venv\Scripts\python -m uvicorn app.main:app --host 0.0.0.0 --port 8001`
-4. Frontend: `cd frontend && npm run dev`
+3. Build the frontend once: `cd frontend && npm run build`
+4. Backend (serves the built dashboard + API on one port): `cd backend && .\.venv\Scripts\python -m uvicorn app.main:app --host 0.0.0.0 --port 8001`
+
+## LAN access
+
+The backend serves both the dashboard and the API on port 8001, so any device on your network can open it at:
+
+```
+http://<your-pc-ip>:8001
+```
+
+Find your IP with `ipconfig` (the `192.168.x.x` IPv4 address). The backend already binds `0.0.0.0`, so no extra config is needed. For dev-only frontend work, run `cd frontend && npm run dev` and set `VITE_API_URL=http://<your-pc-ip>:8001`.
 
 ## ESP32 workflow
 

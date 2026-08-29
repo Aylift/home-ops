@@ -9,9 +9,9 @@ ESP32 (MicroPython) ──POST /api/telemetry──▶ FastAPI backend (:8001) �
    iot/basement/main.py                          backend/app/main.py        frontend/src
 ```
 
-- **Device** ([`iot/basement/main.py`](iot/basement/main.py)): reads BME280 (temp/RH/pressure), fetches outside humidity from OpenWeatherMap, decides fan state via [`should_ventilate()`](iot/basement/main.py:68), POSTs a JSON payload every 5s.
-- **Backend** ([`backend/app/main.py`](backend/app/main.py)): validates payload with Pydantic `Telemetry`, stores the latest sample in memory, logs it, returns 200. Exposes `GET /api/telemetry/latest` for the dashboard.
-- **Frontend** ([`frontend/src/App.vue`](frontend/src/App.vue)): shadcn dashboard that polls `GET /api/telemetry/latest` every 5s and renders fan status + metric cards.
+- **Device** ([`iot/basement/main.py`](iot/basement/main.py)): reads BME280 (temp/RH/pressure), fetches outside humidity from OpenWeatherMap, decides fan state via [`should_ventilate()`](iot/basement/main.py:68). Control loop runs every 5s, but only POSTs telemetry on a **60s heartbeat** or an **immediate event** (fan state change / emergency) to save power.
+- **Backend** ([`backend/app/main.py`](backend/app/main.py)): validates payload with Pydantic `Telemetry`, stores the latest sample in memory, logs it, returns 200. Exposes `GET /api/telemetry/latest` and `GET /api/actions` (rolling log of major events) for the dashboard. Also serves the built frontend (`frontend/dist`) on the same port, so the whole app is reachable at `http://<host-ip>:8001` from any LAN device.
+- **Frontend** ([`frontend/src/App.vue`](frontend/src/App.vue)): shadcn dashboard that polls `GET /api/telemetry/latest` + `GET /api/actions` every 5s and renders fan status, metric cards, and a recent-actions list. Uses a **relative** API URL (same origin) so it works when served by the backend; override with `VITE_API_URL` for dev.
 - **Host tooling** ([`iot/`](iot/)): WebREPL-based scripts to sync/reset/monitor the device.
 
 ## Telemetry payload
@@ -61,6 +61,12 @@ ws.write(b"\x03", wc.WEBREPL_FRAME_TXT)
 time.sleep(1)
 ws.write(b"import machine\r\nmachine.reset()\r\n", wc.WEBREPL_FRAME_TXT)
 ```
+
+### 5. main.py didn't auto-start after reboot
+`boot.py` only connected WiFi and started WebREPL — it never launched `main.py`, so after a reset the device sat idle at the REPL prompt. **Fix:** add `import main` at the end of [`boot.py`](iot/basement/boot.py) so the climate loop starts on every boot.
+
+### 6. Power: heartbeat + event override instead of 5s POSTs
+The device originally POSTed telemetry every 5s (~17k requests/day). WiFi TX is the dominant power draw. **Fix:** the control loop still runs every 5s (fan stays responsive), but telemetry only POSTs on a **60s heartbeat** or an **immediate event** (fan state change / emergency) — cutting radio activity ~12x to ~1.5k requests/day. Events carry an `action` field (e.g. `"Fan turned ON"`) that the backend logs.
 
 ## Gotchas
 

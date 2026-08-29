@@ -36,6 +36,9 @@ except Exception as e:
 # Control variables
 last_api_check = 0
 api_interval = 900  # 900 seconds = 15 minutes
+last_heartbeat = 0
+heartbeat_interval = 60  # Regular telemetry heartbeat (WiFi TX is the main power draw)
+prev_fan = None          # Last known fan state, to detect transitions
 ext_ah = None
 
 def calculate_ah(temp, rh):
@@ -125,30 +128,43 @@ while True:
         # Decision logic
         vent_decision, mode_reason = should_ventilate(temp, hum, ext_ah)
 
-        # Fan control with hysteresis
-        if vent_decision and hum > THRESHOLD_ON and relay.value() == 0:
-            relay.value(1)
-        elif (not vent_decision or hum < THRESHOLD_OFF) and relay.value() == 1:
-            relay.value(0)
-
         fan_state = "ON" if relay.value() == 1 else "OFF"
         print(f"[BASEMENT] T: {temp:.2f}C | RH: {hum:.2f}% | P: {press:.1f}hPa | Fan: {fan_state} | Mode: {mode_reason}")
 
-        # --- DASHBOARD SECTION ---
+        # --- DASHBOARD SECTION (heartbeat + event override) ---
+        # WiFi TX is the dominant power draw. We only POST when:
+        #   1. Heartbeat: regular telemetry every `heartbeat_interval` seconds, OR
+        #   2. Event: the fan state changed (on/off) or an emergency is active.
+        # The control loop still runs every 5s so the fan stays responsive, but
+        # radio activity drops from ~17k to ~1.5k requests/day.
         if ENABLE_DASHBOARD:
-            payload = {
-                "timestamp": current_time,
-                "temperature": round(temp, 2),
-                "humidity": round(hum, 2),
-                "pressure": round(press, 1),
-                "ah_inside": round(calculate_ah(temp, hum), 2),
-                "ah_outside": round(ext_ah, 2) if ext_ah is not None else None,
-                "fan_active": relay.value() == 1,
-                "mode": mode_reason
-            }
-            send_to_dashboard(payload)
+            fan_now = relay.value() == 1
+            fan_changed = prev_fan is not None and fan_now != prev_fan
+            emergency = hum >= EMERGENCY_RH
+            due_heartbeat = (current_time - last_heartbeat) >= heartbeat_interval
 
-        # Loop runs every 5 seconds (if sending to backend, consider raising to 15 or 30s)
+            if fan_changed or emergency or due_heartbeat:
+                payload = {
+                    "timestamp": current_time,
+                    "temperature": round(temp, 2),
+                    "humidity": round(hum, 2),
+                    "pressure": round(press, 1),
+                    "ah_inside": round(calculate_ah(temp, hum), 2),
+                    "ah_outside": round(ext_ah, 2) if ext_ah is not None else None,
+                    "fan_active": fan_now,
+                    "mode": mode_reason
+                }
+                if fan_changed:
+                    payload["action"] = "Fan turned ON" if fan_now else "Fan turned OFF"
+                elif emergency:
+                    payload["action"] = "EMERGENCY: high humidity"
+                send_to_dashboard(payload)
+                last_heartbeat = current_time
+
+            prev_fan = fan_now
+
+        # Control loop runs every 5 seconds; telemetry POST is throttled to
+        # heartbeat_interval (60s) plus immediate event overrides.
         time.sleep(5)
 
     except Exception as e:

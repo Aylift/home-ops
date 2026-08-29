@@ -23,3 +23,6 @@ print("Device IP:", station.ifconfig()[0])
 
 # Start OTA server
 webrepl.start()
+
+# Launch the climate control loop
+import main
