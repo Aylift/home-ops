@@ -10,7 +10,8 @@ ESP32 (MicroPython) ──POST /api/telemetry──▶ FastAPI backend (:8001) �
 ```
 
 - **Device** ([`iot/basement/main.py`](iot/basement/main.py)): reads BME280 (temp/RH/pressure), fetches outside humidity from OpenWeatherMap, decides fan state via [`should_ventilate()`](iot/basement/main.py:68), POSTs a JSON payload every 5s.
-- **Backend** ([`backend/app/main.py`](backend/app/main.py)): validates payload with Pydantic `Telemetry`, logs it, returns 200.
+- **Backend** ([`backend/app/main.py`](backend/app/main.py)): validates payload with Pydantic `Telemetry`, stores the latest sample in memory, logs it, returns 200. Exposes `GET /api/telemetry/latest` for the dashboard.
+- **Frontend** ([`frontend/src/App.vue`](frontend/src/App.vue)): shadcn dashboard that polls `GET /api/telemetry/latest` every 5s and renders fan status + metric cards.
 - **Host tooling** ([`iot/`](iot/)): WebREPL-based scripts to sync/reset/monitor the device.
 
 ## Telemetry payload

@@ -41,10 +41,23 @@ async def validation_handler(request: Request, exc):
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
+# In-memory store of the latest telemetry sample
+latest_telemetry = None
+
+
 @app.post("/api/telemetry")
 async def receive_telemetry(payload: Telemetry):
-    print(f"[TELEMETRY] {payload.model_dump()}")
-    return {"status": "ok", "received": payload.model_dump()}
+    global latest_telemetry
+    latest_telemetry = payload.model_dump()
+    print(f"[TELEMETRY] {latest_telemetry}")
+    return {"status": "ok", "received": latest_telemetry}
+
+
+@app.get("/api/telemetry/latest")
+async def get_latest_telemetry():
+    if latest_telemetry is None:
+        return JSONResponse(status_code=404, content={"detail": "No telemetry yet"})
+    return latest_telemetry
 
 
 @app.get("/health")
