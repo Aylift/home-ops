@@ -134,6 +134,9 @@ while True:
         # Decision logic
         vent_decision, mode_reason = should_ventilate(temp, hum, ext_ah)
 
+        # Apply the decision to the relay (1 = ON, 0 = OFF)
+        relay.value(1 if vent_decision else 0)
+
         fan_state = "ON" if relay.value() == 1 else "OFF"
         print(f"[BASEMENT] T: {temp:.2f}C | RH: {hum:.2f}% | P: {press:.1f}hPa | Fan: {fan_state} | Mode: {mode_reason}")
 
