@@ -68,6 +68,15 @@ ws.write(b"import machine\r\nmachine.reset()\r\n", wc.WEBREPL_FRAME_TXT)
 ### 6. Power: heartbeat + event override instead of 5s POSTs
 The device originally POSTed telemetry every 5s (~17k requests/day). WiFi TX is the dominant power draw. **Fix:** the control loop still runs every 5s (fan stays responsive), but telemetry only POSTs on a **60s heartbeat** or an **immediate event** (fan state change / emergency) — cutting radio activity ~12x to ~1.5k requests/day. Events carry an `action` field (e.g. `"Fan turned ON"`) that the backend logs.
 
+### 7. Static IP on the ESP32
+The device uses a **static IP `192.168.1.49`** (outside the router's DHCP range) so it never changes. Configured in [`boot.py`](iot/basement/boot.py) via `station.ifconfig()` and values from [`config.py`](iot/basement/config.py) (`STATIC_IP`/`NETMASK`/`GATEWAY`/`DNS`). **Gotcha:** the interface must be torn down first (`active(False)` → `active(True)` → `disconnect()`) before applying the static tuple, or a stale DHCP lease wins. Also, `machine.reset()` via WebREPL only works if the socket stays open a few seconds after the command so it fully processes — closing immediately can drop the reset. Host tooling defaults (`.env` `ESP_IP`, `check_esp.py`, `soft_reset.py`) now point at `192.168.1.49`.
+
+### 8. main.py still didn't auto-start after reboot (watchdog)
+Even with `import main` in `boot.py`, a transient failure during `main.py` module-level init (NTP sync, BME280 init, relay pin) could raise and leave the device idle at the REPL prompt. **Fix (two layers):**
+- [`boot.py`](iot/basement/boot.py) wraps `import main` in a `while True` retry loop — on any exception it logs and retries every 5s instead of giving up.
+- [`main.py`](iot/basement/main.py) wraps hardware init (I2C/BME280/relay) in `try/except` and re-raises so the boot.py watchdog can retry, rather than aborting the whole boot.
+- [`soft_reset.py`](iot/soft_reset.py) keeps the WebREPL socket open 3s after `machine.reset()` so the reset fully processes before the socket closes.
+
 ## Gotchas
 
 - **Windows console encoding:** prefix monitor/reset scripts with `set PYTHONIOENCODING=utf-8 &&` to avoid cp1252 errors.
@@ -75,6 +84,7 @@ The device originally POSTed telemetry every 5s (~17k requests/day). WiFi TX is 
 - **Device runs from memory:** after pushing new `main.py`, you MUST soft-reset (with Ctrl-C) for the change to take effect. The file on disk and the running process can differ.
 - **`config.py` and `.env` are gitignored** (secrets). Templates: [`iot/basement/config.template.py`](iot/basement/config.template.py) and [`.env.template`](.env.template).
 - **No Polish anywhere in device code** — comments, logging, and mode strings are all English. Frontend handles display localization.
+- **Device static IP is `192.168.1.49`** — update `.env` `ESP_IP` and the host scripts if it ever changes.
 
 ## Host tooling reference
 

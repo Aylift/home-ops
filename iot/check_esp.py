@@ -7,7 +7,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import webrepl_cli as wc
 
-IP = os.getenv("ESP_IP", "192.168.1.131")
+IP = os.getenv("ESP_IP", "192.168.1.49")
 PASS = os.getenv("WEBREPL_PASS", "admin")
 
 host, port, _ = wc.parse_remote(IP + ":")

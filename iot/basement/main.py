@@ -21,10 +21,16 @@ ENABLE_DASHBOARD = True
 DASHBOARD_URL = config.DASHBOARD_URL
 
 # --- HARDWARE INIT ---
-i2c = I2C(0, scl=Pin(22), sda=Pin(21))
-bme = bme280.BME280(i2c=i2c)
-relay = Pin(19, Pin.OUT)
-relay.value(0)
+# Wrap in try/except so a transient sensor/relay failure cannot abort the
+# whole boot (which would leave the device idle at the REPL prompt).
+try:
+    i2c = I2C(0, scl=Pin(22), sda=Pin(21))
+    bme = bme280.BME280(i2c=i2c)
+    relay = Pin(19, Pin.OUT)
+    relay.value(0)
+except Exception as e:
+    print(f"[HARDWARE INIT ERROR] {e}")
+    raise  # let boot.py watchdog retry
 
 # Time sync
 try:
