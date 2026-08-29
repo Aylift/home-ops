@@ -5,3 +5,8 @@ iot/basement/config.py
 # Python
 __pycache__/
 *.pyc
+backend/.venv/
+
+# Node
+frontend/node_modules/
+frontend/dist/
