@@ -1,0 +1,7 @@
+# Secrets
+.env
+iot/basement/config.py
+
+# Python
+__pycache__/
+*.pyc
