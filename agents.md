@@ -77,6 +77,12 @@ Even with `import main` in `boot.py`, a transient failure during `main.py` modul
 - [`main.py`](iot/basement/main.py) wraps hardware init (I2C/BME280/relay) in `try/except` and re-raises so the boot.py watchdog can retry, rather than aborting the whole boot.
 - [`soft_reset.py`](iot/soft_reset.py) keeps the WebREPL socket open 3s after `machine.reset()` so the reset fully processes before the socket closes.
 
+### 9. Fan never turned on (decision not applied to relay)
+`should_ventilate()` returned a `vent_decision` but the main loop never applied it — the relay was only ever set to 0 at init, so the fan could never turn on regardless of the logic. **Fix:** in [`main.py`](iot/basement/main.py:137), apply the decision to the relay right after computing it: `relay.value(1 if vent_decision else 0)`.
+
+### 10. Dashboard showed "Last update: 1996" (MicroPython epoch)
+MicroPython's `time.time()` counts seconds since the **MicroPython epoch (2000-01-01)**, not the Unix epoch (1970-01-01). The frontend treated the raw value as Unix time, so it rendered ~1996. **Fix:** the backend adds `MICROPY_EPOCH_OFFSET = 946684800` in [`receive_telemetry()`](backend/app/main.py:61) so stored timestamps are real Unix seconds the frontend renders directly.
+
 ## Gotchas
 
 - **Windows console encoding:** prefix monitor/reset scripts with `set PYTHONIOENCODING=utf-8 &&` to avoid cp1252 errors.

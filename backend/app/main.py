@@ -52,11 +52,17 @@ latest_telemetry = None
 actions = []
 MAX_ACTIONS = 20
 
+# MicroPython's time.time() counts seconds since the MicroPython epoch
+# (2000-01-01 00:00:00 UTC), not the Unix epoch (1970-01-01). Add this offset
+# so timestamps are real Unix seconds the frontend can render directly.
+MICROPY_EPOCH_OFFSET = 946684800
+
 
 @app.post("/api/telemetry")
 async def receive_telemetry(payload: Telemetry):
     global latest_telemetry
     data = payload.model_dump()
+    data["timestamp"] = data["timestamp"] + MICROPY_EPOCH_OFFSET
     latest_telemetry = data
     if data.get("action"):
         actions.insert(0, {"timestamp": data["timestamp"], "action": data["action"]})
