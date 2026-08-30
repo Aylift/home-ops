@@ -7,14 +7,20 @@ import ntptime
 import config
 
 # --- WEATHER CONFIG ---
+# Query by coordinates (lat/lon) for the closest weather to home instead of a
+# city name ~30km away. OWM returns the nearest grid point to these coords.
 API_KEY = config.API_KEY
-CITY = config.CITY
-WEATHER_URL = f"http://api.openweathermap.org/data/2.5/weather?q={CITY}&appid={API_KEY}&units=metric"
+LAT = config.LAT
+LON = config.LON
+WEATHER_URL = f"http://api.openweathermap.org/data/2.5/weather?lat={LAT}&lon={LON}&appid={API_KEY}&units=metric"
 
 # --- CLIMATE CONFIG ---
 THRESHOLD_ON = 60.0      # Fan turn-on threshold
 THRESHOLD_OFF = 50.0     # Fan turn-off threshold (hysteresis)
 EMERGENCY_RH = 75.0      # Hard flood/failure threshold
+AH_HYSTERESIS = 0.5      # Dead-band (g/m3): fan flips only when AH differs by > this
+MIN_RUN_TIME = 300       # Min seconds fan stays ON once turned on (anti-cycling)
+MIN_OFF_TIME = 300       # Min seconds fan stays OFF once turned off (anti-cycling)
 
 # --- DASHBOARD (BACKEND API) CONFIG ---
 ENABLE_DASHBOARD = True
@@ -45,6 +51,7 @@ api_interval = 900  # 900 seconds = 15 minutes
 last_heartbeat = 0
 heartbeat_interval = 60  # Regular telemetry heartbeat (WiFi TX is the main power draw)
 prev_fan = None          # Last known fan state, to detect transitions
+last_state_change = 0    # time.time() of last fan state flip (anti-cycling)
 ext_ah = None
 
 def calculate_ah(temp, rh):
@@ -74,21 +81,37 @@ def fetch_external_ah():
         print(f"\n[API ERROR] Connection exception: {e}")
         return None
 
-def should_ventilate(int_temp, int_rh, ext_ah_value):
-    """Return tuple: (should_turn_on_fan, "Reason / Mode")"""
+def should_ventilate(int_temp, int_rh, ext_ah_value, fan_on, now):
+    """Return tuple: (should_turn_on_fan, "Reason / Mode").
+
+    Hysteresis: the fan flips only when the AH difference exceeds
+    AH_HYSTERESIS, and only after MIN_RUN_TIME / MIN_OFF_TIME have elapsed
+    since the last flip. This stops rapid on/off cycling when inside and
+    outside AH are nearly equal (sensor/API noise).
+    """
     if int_rh >= EMERGENCY_RH:
         return True, "EMERGENCY (Flood)"
 
-    if int_rh <= THRESHOLD_ON and relay.value() == 0:
+    if int_rh <= THRESHOLD_ON and not fan_on:
         return False, "STANDBY (Normal)"
 
     int_ah = calculate_ah(int_temp, int_rh)
 
     if ext_ah_value is not None:
-        if ext_ah_value < int_ah:
+        diff = int_ah - ext_ah_value  # >0 means outside is drier -> ventilate
+        # Anti-cycling: don't flip until the min dwell time has passed.
+        if fan_on and (now - last_state_change) < MIN_RUN_TIME:
             return True, "API (Outside dry)"
-        else:
+        if not fan_on and (now - last_state_change) < MIN_OFF_TIME:
             return False, "API (Outside wet)"
+        # Hysteresis dead-band: ignore tiny differences.
+        if diff > AH_HYSTERESIS:
+            return True, "API (Outside dry)"
+        elif diff < -AH_HYSTERESIS:
+            return False, "API (Outside wet)"
+        else:
+            # Inside the dead-band: hold the current state.
+            return fan_on, "API (Outside dry)" if fan_on else "API (Outside wet)"
 
     # GUARD: API failure, fall back to calendar
     current_month = time.localtime()[1]
@@ -131,10 +154,13 @@ while True:
         press = bme.pressure()
         hum = bme.humidity()
 
-        # Decision logic
-        vent_decision, mode_reason = should_ventilate(temp, hum, ext_ah)
+        # Decision logic (pass current fan state + time for hysteresis/anti-cycling)
+        fan_on = relay.value() == 1
+        vent_decision, mode_reason = should_ventilate(temp, hum, ext_ah, fan_on, current_time)
 
-        # Apply the decision to the relay (1 = ON, 0 = OFF)
+        # Apply the decision to the relay (1 = ON, 0 = OFF); track state flips
+        if vent_decision != fan_on:
+            last_state_change = current_time
         relay.value(1 if vent_decision else 0)
 
         fan_state = "ON" if relay.value() == 1 else "OFF"

@@ -83,6 +83,12 @@ Even with `import main` in `boot.py`, a transient failure during `main.py` modul
 ### 10. Dashboard showed "Last update: 1996" (MicroPython epoch)
 MicroPython's `time.time()` counts seconds since the **MicroPython epoch (2000-01-01)**, not the Unix epoch (1970-01-01). The frontend treated the raw value as Unix time, so it rendered ~1996. **Fix:** the backend adds `MICROPY_EPOCH_OFFSET = 946684800` in [`receive_telemetry()`](backend/app/main.py:61) so stored timestamps are real Unix seconds the frontend renders directly.
 
+### 11. Fan rapidly toggled on/off + wrong weather location
+Two issues surfaced together. (a) When inside/outside AH are nearly equal (e.g. 11.77 vs 11.78), the comparison flipped on sensor/API noise, cycling the fan every few seconds. (b) Weather came from `CITY="Wroclaw,PL"` (~30km away), giving inaccurate outside AH. **Fixes in [`main.py`](iot/basement/main.py:85):**
+- **Hysteresis:** `AH_HYSTERESIS = 0.5` (g/m³) dead-band — the fan only flips when the AH difference exceeds ±0.5, otherwise it holds the current state.
+- **Anti-cycling:** `MIN_RUN_TIME = 300` / `MIN_OFF_TIME = 300` — the fan must dwell at least 5 min in a state before it can flip again.
+- **Coordinates:** switched weather query from city name to `lat`/`lon` (values live in the gitignored [`config.py`](iot/basement/config.py); template leaves them blank) for precise local outside AH.
+
 ## Gotchas
 
 - **Windows console encoding:** prefix monitor/reset scripts with `set PYTHONIOENCODING=utf-8 &&` to avoid cp1252 errors.

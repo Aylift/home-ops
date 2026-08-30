@@ -14,7 +14,10 @@ PASSWORD = ""
 
 # --- Weather API ---
 API_KEY = ""
-CITY = ""
+# Coordinates (lat/lon) for the closest weather to home - more precise than a
+# city name. Fill in your own values.
+LAT = ""
+LON = ""
 
 # --- Dashboard Backend ---
 DASHBOARD_URL = ""
