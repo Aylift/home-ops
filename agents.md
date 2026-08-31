@@ -89,6 +89,12 @@ Two issues surfaced together. (a) When inside/outside AH are nearly equal (e.g. 
 - **Anti-cycling:** `MIN_RUN_TIME = 300` / `MIN_OFF_TIME = 300` — the fan must dwell at least 5 min in a state before it can flip again.
 - **Coordinates:** switched weather query from city name to `lat`/`lon` (values live in the gitignored [`config.py`](iot/basement/config.py); template leaves them blank) for precise local outside AH.
 
+### 12. False "Flood" emergency during heavy rain (AH-aware emergency)
+`EMERGENCY_RH = 75.0` forced the fan ON unconditionally at high RH, even when outside AH was higher than inside (e.g. inside 13 vs outside 14.2 during rain) — ventilating pulled MORE moisture in and the fan cycled at the 75% boundary. **Fix in [`should_ventilate()`](iot/basement/main.py:85):** the emergency branch is now AH-aware. It computes `int_ah` first, then only forces the fan ON when outside is actually drier (`diff > AH_HYSTERESIS` → `"EMERGENCY (Outside dry)"`); if outside is wetter it forces OFF (`"EMERGENCY (Outside wet)"`), and if outside AH is unknown it forces OFF (`"EMERGENCY (Outside unknown)"`). The emergency branch decides immediately (no `MIN_OFF_TIME`) so a genuine flood is never delayed by anti-cycling.
+
+### 13. Backend 404 after PC IP change (DASHBOARD_URL hardcoded)
+The ESP32's `DASHBOARD_URL` in the gitignored [`config.py`](iot/basement/config.py) was hardcoded to the PC's old DHCP IP, so when the PC's IP changed the device POSTed to a dead address and `/api/telemetry/latest` returned 404 (no telemetry received). **Fix:** update `DASHBOARD_URL` to the PC's current IP and push+soft-reset. **Root cause:** the PC has no static IP — it should be given one (outside the DHCP range) so this stops recurring.
+
 ## Gotchas
 
 - **Windows console encoding:** prefix monitor/reset scripts with `set PYTHONIOENCODING=utf-8 &&` to avoid cp1252 errors.

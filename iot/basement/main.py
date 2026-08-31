@@ -88,14 +88,27 @@ def should_ventilate(int_temp, int_rh, ext_ah_value, fan_on, now):
     AH_HYSTERESIS, and only after MIN_RUN_TIME / MIN_OFF_TIME have elapsed
     since the last flip. This stops rapid on/off cycling when inside and
     outside AH are nearly equal (sensor/API noise).
+
+    Emergency is AH-aware: high RH alone (e.g. heavy rain) is NOT a flood.
+    The fan is only forced ON when outside air is actually drier than inside;
+    if outside is wetter or unknown, ventilating would pull MORE moisture in,
+    so the fan stays OFF. The emergency branch decides immediately (no
+    MIN_OFF_TIME) so a genuine flood is never delayed by anti-cycling.
     """
+    int_ah = calculate_ah(int_temp, int_rh)
+
     if int_rh >= EMERGENCY_RH:
-        return True, "EMERGENCY (Flood)"
+        if ext_ah_value is not None:
+            diff = int_ah - ext_ah_value
+            if diff > AH_HYSTERESIS:
+                return True, "EMERGENCY (Outside dry)"
+            else:
+                return False, "EMERGENCY (Outside wet)"
+        else:
+            return False, "EMERGENCY (Outside unknown)"
 
     if int_rh <= THRESHOLD_ON and not fan_on:
         return False, "STANDBY (Normal)"
-
-    int_ah = calculate_ah(int_temp, int_rh)
 
     if ext_ah_value is not None:
         diff = int_ah - ext_ah_value  # >0 means outside is drier -> ventilate
