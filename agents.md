@@ -9,7 +9,7 @@ ESP32 (MicroPython) ──POST /api/telemetry──▶ FastAPI backend (:8001) �
    iot/basement/main.py                          backend/app/main.py        frontend/src
 ```
 
-- **Device** ([`iot/basement/main.py`](iot/basement/main.py)): reads BME280 (temp/RH/pressure), fetches outside humidity from OpenWeatherMap, decides fan state via [`should_ventilate()`](iot/basement/main.py:68). Control loop runs every 5s, but only POSTs telemetry on a **60s heartbeat** or an **immediate event** (fan state change / emergency) to save power.
+- **Device** ([`iot/basement/main.py`](iot/basement/main.py)): reads BME280 (temp/RH/pressure), fetches outside humidity from OpenWeatherMap, decides fan state via [`should_ventilate()`](iot/basement/main.py:68). Control loop sleeps **5 min** (`LOOP_INTERVAL`) between cycles; telemetry POSTs on a **5-min heartbeat** or an **immediate event** (fan state change / emergency entry) to save power.
 - **Backend** ([`backend/app/main.py`](backend/app/main.py)): validates payload with Pydantic `Telemetry`, stores the latest sample in memory, logs it, returns 200. Exposes `GET /api/telemetry/latest` and `GET /api/actions` (rolling log of major events) for the dashboard. Also serves the built frontend (`frontend/dist`) on the same port, so the whole app is reachable at `http://<host-ip>:8001` from any LAN device.
 - **Frontend** ([`frontend/src/App.vue`](frontend/src/App.vue)): shadcn dashboard that polls `GET /api/telemetry/latest` + `GET /api/actions` every 5s and renders fan status, metric cards, and a recent-actions list. Uses a **relative** API URL (same origin) so it works when served by the backend; override with `VITE_API_URL` for dev.
 - **Host tooling** ([`iot/`](iot/)): WebREPL-based scripts to sync/reset/monitor the device.
@@ -94,6 +94,17 @@ Two issues surfaced together. (a) When inside/outside AH are nearly equal (e.g. 
 
 ### 13. Backend 404 after PC IP change (DASHBOARD_URL hardcoded)
 The ESP32's `DASHBOARD_URL` in the gitignored [`config.py`](iot/basement/config.py) was hardcoded to the PC's old DHCP IP, so when the PC's IP changed the device POSTed to a dead address and `/api/telemetry/latest` returned 404 (no telemetry received). **Fix:** update `DASHBOARD_URL` to the PC's current IP and push+soft-reset. **Root cause:** the PC has no static IP — it should be given one (outside the DHCP range) so this stops recurring.
+
+### 14. Sleep-5m cadence + no emergency spam (single timing knob)
+The device ran a 5s loop with a 60s heartbeat and 300s API refresh — ~17k wake cycles/day and it spammed "EMERGENCY: high humidity" every loop while RH stayed ≥ 75%. **Fix in [`main.py`](iot/basement/main.py:23):** one authoritative `LOOP_INTERVAL = 300` cadence constant, with every timing interval derived from it (no scattered magic numbers):
+```python
+LOOP_INTERVAL = 300
+MIN_RUN_TIME = LOOP_INTERVAL       # fan dwells ≥1 cycle before flipping
+MIN_OFF_TIME = LOOP_INTERVAL
+API_INTERVAL = 3 * LOOP_INTERVAL   # outside weather refreshed every 15 min
+HEARTBEAT_INTERVAL = LOOP_INTERVAL # telemetry every cycle (5 min)
+```
+The main loop now `time.sleep(LOOP_INTERVAL)` between cycles (~288 wake-ups/day, ~12x less radio/CPU). The emergency **action** is logged only on the transition INTO emergency (`emergency_entered = emergency and not prev_emergency`), not every cycle; the emergency **control decision** still runs every wake-up. Trade-off: the fan reacts at most once per 5-min cycle and outside AH can be up to 15 min stale — intentional for the power savings.
 
 ## Gotchas
 
