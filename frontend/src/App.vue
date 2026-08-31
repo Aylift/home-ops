@@ -39,7 +39,8 @@ async function fetchLatest() {
 let timer
 onMounted(() => {
   fetchLatest()
-  timer = setInterval(fetchLatest, 5000)
+  // Device POSTs telemetry every 5 min (LOOP_INTERVAL); polling faster is wasteful.
+  timer = setInterval(fetchLatest, 300000)
 })
 onUnmounted(() => clearInterval(timer))
 
