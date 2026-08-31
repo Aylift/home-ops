@@ -100,4 +100,14 @@ if FRONTEND_DIST.is_dir():
         file = FRONTEND_DIST / full_path
         if full_path and file.is_file():
             return FileResponse(file)
-        return FileResponse(FRONTEND_DIST / "index.html")
+        # index.html is the pointer to the current hashed Vite bundle. Never
+        # cache it, or a stale index.html keeps serving an old bundle after a
+        # rebuild (the browser would keep running the old polling code).
+        return FileResponse(
+            FRONTEND_DIST / "index.html",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )

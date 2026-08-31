@@ -22,13 +22,17 @@ async function fetchLatest() {
   loading.value = true
   error.value = ''
   try {
-    const [tRes, aRes] = await Promise.all([
-      fetch(`${API}/api/telemetry/latest`),
-      fetch(`${API}/api/actions?limit=5`),
-    ])
+    const tRes = await fetch(`${API}/api/telemetry/latest`)
     if (!tRes.ok) throw new Error(`HTTP ${tRes.status}`)
     telemetry.value = await tRes.json()
-    if (aRes.ok) actions.value = await aRes.json()
+
+    // Actions are secondary: a failure here must not block telemetry updates.
+    try {
+      const aRes = await fetch(`${API}/api/actions?limit=5`)
+      if (aRes.ok) actions.value = await aRes.json()
+    } catch (e) {
+      console.warn('Failed to fetch actions:', e)
+    }
   } catch (e) {
     error.value = e.message
   } finally {
@@ -39,8 +43,9 @@ async function fetchLatest() {
 let timer
 onMounted(() => {
   fetchLatest()
-  // Device POSTs telemetry every 5 min (LOOP_INTERVAL); polling faster is wasteful.
-  timer = setInterval(fetchLatest, 300000)
+  // Device POSTs telemetry every 5 min (LOOP_INTERVAL). Poll every 30s so the
+  // dashboard picks up a new sample promptly without hammering the backend.
+  timer = setInterval(fetchLatest, 30000)
 })
 onUnmounted(() => clearInterval(timer))
 

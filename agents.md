@@ -106,6 +106,13 @@ HEARTBEAT_INTERVAL = LOOP_INTERVAL # telemetry every cycle (5 min)
 ```
 The main loop now `time.sleep(LOOP_INTERVAL)` between cycles (~288 wake-ups/day, ~12x less radio/CPU). The emergency **action** is logged only on the transition INTO emergency (`emergency_entered = emergency and not prev_emergency`), not every cycle; the emergency **control decision** still runs every wake-up. Trade-off: the fan reacts at most once per 5-min cycle and outside AH can be up to 15 min stale — intentional for the power savings.
 
+### 15. Dashboard polling "dead" after rebuild (stale cached index.html)
+After the device cadence change, the dashboard showed **zero requests in dev tools** even after 30 min — data only updated on manual refresh. The polling code was correct; the real cause was the browser caching the **old `index.html`**, which kept loading the old hashed Vite bundle (the old polling code). **Fixes:**
+- **Backend** ([`main.py`](backend/app/main.py:98)): the SPA fallback now returns `index.html` with `Cache-Control: no-cache, no-store, must-revalidate` so a rebuild is picked up on the next normal reload (index.html is the pointer to the current hashed bundle; the hashed JS/CSS assets themselves stay long-cacheable).
+- **Frontend** ([`App.vue`](frontend/src/App.vue:21)): `fetchLatest()` no longer uses `Promise.all` — a failure fetching `/api/actions` can no longer block the telemetry update. Polling interval is 30s (data changes every 5 min, so 30s is responsive without hammering the backend).
+- **Deploy note:** after `npm run build`, restart uvicorn (backend reads `frontend/dist` from disk per-request, but a Python change needs a restart), then hard-refresh (Ctrl+F5) once to clear the stale cached `index.html`.
+- **Gotcha:** restarting the backend clears the in-memory `latest_telemetry`, so `/api/telemetry/latest` returns 404 until the device's next 5-min heartbeat POST repopulates it.
+
 ## Gotchas
 
 - **Windows console encoding:** prefix monitor/reset scripts with `set PYTHONIOENCODING=utf-8 &&` to avoid cp1252 errors.
