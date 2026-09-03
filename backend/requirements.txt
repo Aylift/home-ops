@@ -1,3 +1,4 @@
+alembic==1.16.4
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.14.2
@@ -7,6 +8,7 @@ greenlet==3.5.5
 h11==0.16.0
 httptools==0.8.0
 idna==3.19
+psycopg[binary]==3.2.9
 pydantic==2.13.5
 pydantic-settings==2.15.0
 pydantic_core==2.46.5

@@ -1,4 +1,12 @@
-"""Listen to ESP32 REPL output to observe main loop + dashboard errors."""
+"""Listen to ESP32 REPL output to observe main loop + dashboard errors.
+
+WARNING: Connecting to the WebREPL REPL sends a Ctrl-C, which interrupts the
+running climate loop and drops the device to `>>>`. This script can NEVER
+observe a live loop -- it always kills it first. To verify the device is
+running, query the backend instead (GET /api/telemetry/latest?node_id=basement)
+and check `received_at` is fresh. If you run this script, follow up with
+soft_reset.py to restart the loop.
+"""
 import os
 import socket
 import sys

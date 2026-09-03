@@ -1,7 +1,5 @@
-import os
 import sys
-from pathlib import Path
-from typing import Optional
+from contextlib import asynccontextmanager
 
 # Windows console cp1252 can't encode Polish chars (ą) in mode field.
 # Force UTF-8 with replacement so print() never crashes the request handler.
@@ -13,28 +11,33 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from sqlalchemy import text
 
-app = FastAPI(title="Home Ops API")
+from app.config import settings
+from app.database import engine
+from app.routers import events, nodes, telemetry
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    engine.dispose()
+
+
+app = FastAPI(title="Home Ops API", lifespan=lifespan)
+
+# Same-origin in production (frontend served by this app). Only the Vite dev
+# server needs CORS.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-class Telemetry(BaseModel):
-    timestamp: float
-    temperature: float
-    humidity: float
-    pressure: float
-    ah_inside: float
-    ah_outside: Optional[float] = None
-    fan_active: bool
-    mode: str
-    action: Optional[str] = None
+app.include_router(telemetry.router)
+app.include_router(events.router)
+app.include_router(nodes.router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -45,53 +48,25 @@ async def validation_handler(request: Request, exc):
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
-# In-memory store of the latest telemetry sample
-latest_telemetry = None
-
-# Rolling log of major events (fan on/off, emergencies), newest first
-actions = []
-MAX_ACTIONS = 20
-
-# MicroPython's time.time() counts seconds since the MicroPython epoch
-# (2000-01-01 00:00:00 UTC), not the Unix epoch (1970-01-01). Add this offset
-# so timestamps are real Unix seconds the frontend can render directly.
-MICROPY_EPOCH_OFFSET = 946684800
+@app.get("/health/live")
+async def health_live():
+    return {"status": "ok"}
 
 
-@app.post("/api/telemetry")
-async def receive_telemetry(payload: Telemetry):
-    global latest_telemetry
-    data = payload.model_dump()
-    data["timestamp"] = data["timestamp"] + MICROPY_EPOCH_OFFSET
-    latest_telemetry = data
-    if data.get("action"):
-        actions.insert(0, {"timestamp": data["timestamp"], "action": data["action"]})
-        del actions[MAX_ACTIONS:]
-    print(f"[TELEMETRY] {data}")
-    return {"status": "ok", "received": data}
-
-
-@app.get("/api/telemetry/latest")
-async def get_latest_telemetry():
-    if latest_telemetry is None:
-        return JSONResponse(status_code=404, content={"detail": "No telemetry yet"})
-    return latest_telemetry
-
-
-@app.get("/api/actions")
-async def get_actions(limit: int = 5):
-    return actions[:limit]
-
-
-@app.get("/health")
-async def health():
+@app.get("/health/ready")
+async def health_ready():
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
     return {"status": "ok"}
 
 
 # --- Frontend static hosting ---
-# Serve the built Vue app from frontend/dist so the whole dashboard + API live
-# on one port (http://<host-ip>:8001), reachable from any device on the LAN.
-FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+# Serve the built Vue app from settings.frontend_dist so the whole dashboard +
+# API live on one port, reachable from any device on the LAN.
+FRONTEND_DIST = settings.frontend_dist
 if FRONTEND_DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 

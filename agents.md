@@ -113,6 +113,14 @@ After the device cadence change, the dashboard showed **zero requests in dev too
 - **Deploy note:** after `npm run build`, restart uvicorn (backend reads `frontend/dist` from disk per-request, but a Python change needs a restart), then hard-refresh (Ctrl+F5) once to clear the stale cached `index.html`.
 - **Gotcha:** restarting the backend clears the in-memory `latest_telemetry`, so `/api/telemetry/latest` returns 404 until the device's next 5-min heartbeat POST repopulates it.
 
+### 16. Device stuck at `>>>` after soft reset (boot.py watchdog + KeyboardInterrupt)
+After a soft reset the device sat idle at the REPL prompt and never ran the climate loop. **Root cause:** [`boot.py`](iot/basement/boot.py) had a `while True: try: import main; break; except Exception` watchdog. `KeyboardInterrupt` derives from `BaseException`, **not** `Exception`, so the Ctrl-C sent by [`soft_reset.py`](iot/soft_reset.py) propagated through boot.py's `except Exception`, aborting boot.py entirely and leaving the device at `>>>`. MicroPython already auto-executes `main.py` after `boot.py` returns, so the watchdog was both wrong and unnecessary. **Fix (two files):**
+- [`boot.py`](iot/basement/boot.py) now does only WiFi/static-IP/WebREPL setup and returns normally — no import-main loop.
+- [`main.py`](iot/basement/main.py) is now a thin **supervisor** that imports the real app from a new [`climate.py`](iot/basement/climate.py) and retries on transient failures, re-raising `KeyboardInterrupt` so Ctrl-C still drops to the REPL. Hardware init moved inside `climate.run()` so the supervisor can retry it; `should_ventilate()` takes `last_state_change` as a parameter instead of a module global.
+
+### 17. check_esp.py interrupts the running loop (REPL connect = Ctrl-C)
+Connecting to the WebREPL **REPL** sends a Ctrl-C, which interrupts the running climate loop and drops the device to `>>>`. So [`check_esp.py`](iot/check_esp.py) can never observe a live loop — it always kills it first. A `>>>` prompt after running it does **not** mean the device is broken. **To verify the device is running, do NOT touch the REPL:** query the backend instead (`GET /api/telemetry/latest?node_id=basement`) and check the `received_at` timestamp is fresh. If you do run `check_esp.py`, follow up with a `soft_reset.py` to restart the loop.
+
 ## Gotchas
 
 - **Windows console encoding:** prefix monitor/reset scripts with `set PYTHONIOENCODING=utf-8 &&` to avoid cp1252 errors.
@@ -121,6 +129,7 @@ After the device cadence change, the dashboard showed **zero requests in dev too
 - **`config.py` and `.env` are gitignored** (secrets). Templates: [`iot/basement/config.template.py`](iot/basement/config.template.py) and [`.env.template`](.env.template).
 - **No Polish anywhere in device code** — comments, logging, and mode strings are all English. Frontend handles display localization.
 - **Device static IP is `192.168.1.49`** — update `.env` `ESP_IP` and the host scripts if it ever changes.
+- **`check_esp.py` interrupts the running loop** — connecting to the WebREPL REPL sends Ctrl-C and drops the device to `>>>`. Never use it to verify a live loop; query `GET /api/telemetry/latest?node_id=basement` instead. If you run it, follow up with `soft_reset.py`.
 
 ## Host tooling reference
 

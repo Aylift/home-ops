@@ -38,14 +38,9 @@ print("[WIFI] connected:", station.ifconfig())
 # Start OTA server
 webrepl.start()
 
-# Launch the climate control loop with a watchdog.
-# If main.py raises during module-level init (e.g. a transient NTP or
-# sensor failure), retry instead of leaving the device idle at the REPL.
-while True:
-    try:
-        import main
-        break  # main.py runs its own infinite loop; only reached on import error
-    except Exception as e:
-        print("[BOOT] main.py failed to start:", repr(e))
-        print("[BOOT] retrying in 5s...")
-        time.sleep(5)
+# NOTE: boot.py must return normally here. MicroPython automatically
+# executes main.py after boot.py completes. Do NOT add an import-main
+# watchdog loop here: a Ctrl-C (KeyboardInterrupt) sent over WebREPL
+# derives from BaseException, not Exception, so `except Exception` would
+# NOT catch it -- it would propagate through boot.py, abort it, and leave
+# the device idle at the REPL. Crash-retry supervision belongs in main.py.

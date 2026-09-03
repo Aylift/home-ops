@@ -21,6 +21,8 @@ LON = ""
 
 # --- Dashboard Backend ---
 DASHBOARD_URL = ""
+# Unique node identifier for this device (must exist in the backend node registry).
+NODE_ID = "basement"
 
 # --- WebREPL ---
 WEBREPL_PASS = ""
