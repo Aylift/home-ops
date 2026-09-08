@@ -1,12 +1,14 @@
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.models import Node
-from app.schemas import NodeIn, NodeOut
+from app.schemas import NodeIn, NodeOut, NodeStatusOut
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
@@ -32,3 +34,27 @@ def create_node(payload: NodeIn, db: DbDep):
     db.commit()
     db.refresh(node)
     return node
+
+
+@router.get("/{node_id}/status", response_model=NodeStatusOut)
+def get_node_status(node_id: str, db: DbDep):
+    node = db.scalar(select(Node).where(Node.node_id == node_id))
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"Node not found: {node_id}")
+
+    seconds_since_seen = None
+    alive = False
+    if node.last_seen_at is not None:
+        seconds_since_seen = int(
+            (datetime.now(timezone.utc) - node.last_seen_at).total_seconds()
+        )
+        alive = seconds_since_seen <= settings.node_alive_seconds
+
+    return NodeStatusOut(
+        node_id=node.node_id,
+        name=node.name,
+        enabled=node.enabled,
+        alive=alive,
+        last_seen_at=node.last_seen_at,
+        seconds_since_seen=seconds_since_seen,
+    )

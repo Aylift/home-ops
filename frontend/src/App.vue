@@ -18,6 +18,7 @@ const telemetry = ref(null)
 const actions = ref([])
 const nodes = ref([])
 const history = ref([])
+const status = ref(null)
 const error = ref('')
 const loading = ref(false)
 const historyLoading = ref(false)
@@ -35,6 +36,16 @@ async function fetchNodes() {
     }
   } catch (e) {
     console.warn('Failed to fetch nodes:', e)
+  }
+}
+
+async function fetchStatus() {
+  try {
+    const res = await fetch(`${API}/api/nodes/${nodeId.value}/status`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    status.value = await res.json()
+  } catch (e) {
+    console.warn('Failed to fetch node status:', e)
   }
 }
 
@@ -79,16 +90,21 @@ let timer
 onMounted(() => {
   fetchNodes()
   fetchLatest()
+  fetchStatus()
   fetchHistory()
   // Device POSTs telemetry every 5 min (LOOP_INTERVAL). Poll every 30s so the
   // dashboard picks up a new sample promptly without hammering the backend.
-  timer = setInterval(fetchLatest, 30000)
+  timer = setInterval(() => {
+    fetchLatest()
+    fetchStatus()
+  }, 30000)
 })
 onUnmounted(() => clearInterval(timer))
 
 // Reload live cards + history when the selected node changes.
 watch(nodeId, () => {
   fetchLatest()
+  fetchStatus()
   fetchHistory()
 })
 
@@ -115,7 +131,20 @@ const metrics = [
     <div class="mx-auto max-w-6xl space-y-6">
       <header class="flex items-center justify-between gap-4">
         <div>
-          <h1 class="text-2xl font-bold">Climate Dashboard</h1>
+          <h1 class="flex items-center gap-2 text-2xl font-bold">
+            Climate Dashboard
+            <span
+              v-if="status"
+              class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
+              :class="status.alive ? 'bg-emerald-500/15 text-emerald-600' : 'bg-red-500/15 text-red-600'"
+            >
+              <span
+                class="size-2 rounded-full"
+                :class="status.alive ? 'bg-emerald-500' : 'bg-red-500'"
+              ></span>
+              {{ status.alive ? 'Online' : 'Offline' }}
+            </span>
+          </h1>
           <p class="text-muted-foreground text-sm">
             Last update: {{ fmtTime(telemetry?.timestamp) }}
           </p>

@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     # Directory of the built Vue frontend (served by this app).
     frontend_dist: Path = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
+    # A node is considered "alive" if it reported within this many seconds.
+    # The device POSTs on a 5-min heartbeat, so default to ~2x that to absorb
+    # network jitter without false negatives.
+    node_alive_seconds: int = 600
+
 
 @lru_cache
 def get_settings() -> Settings:

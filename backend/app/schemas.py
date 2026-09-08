@@ -64,3 +64,12 @@ class NodeOut(BaseModel):
     enabled: bool
     created_at: datetime
     last_seen_at: Optional[datetime] = None
+
+
+class NodeStatusOut(BaseModel):
+    node_id: str
+    name: str
+    enabled: bool
+    alive: bool
+    last_seen_at: Optional[datetime] = None
+    seconds_since_seen: Optional[int] = None
