@@ -86,6 +86,9 @@ class WeatherOut(BaseModel):
     icon: str
     wind_speed_mps: Optional[float] = None
     cloud_pct: Optional[int] = None
+    # Place name of the weather station the data was fetched from (OWM returns
+    # the nearest locality name for the configured coordinates).
+    station_name: Optional[str] = None
     fetched_at: datetime
     observed_at: Optional[datetime] = None
     stale: bool

@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, onUnmounted, ref, watch } from 'vue'
-import { RefreshCw, Fan, Thermometer, Droplets, Gauge, Wind, History, Activity, CloudSun } from '@lucide/vue'
+import { RefreshCw, Fan, History, Activity, CloudSun, Home } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -134,12 +134,22 @@ function fmtTime(ts) {
 }
 
 const metrics = [
-  { label: 'Temperature', value: 'temperature', unit: '°C', icon: Thermometer },
-  { label: 'Humidity', value: 'humidity', unit: '%', icon: Droplets },
-  { label: 'Pressure', value: 'pressure', unit: 'hPa', icon: Gauge },
-  { label: 'AH inside', value: 'ah_inside', unit: 'g/m³', icon: Wind },
-  { label: 'AH outside', value: 'ah_outside', unit: 'g/m³', icon: Wind },
+  { label: 'Temperature', value: 'temperature', unit: '°C', decimals: 1 },
+  { label: 'Humidity', value: 'humidity', unit: '%', decimals: 0 },
+  { label: 'Pressure', value: 'pressure', unit: 'hPa', decimals: 1 },
+  { label: 'AH inside', value: 'ah_inside', unit: 'g/m³', decimals: 1 },
+  { label: 'AH outside', value: 'ah_outside', unit: 'g/m³', decimals: 1 },
 ]
+
+function metricValue(m) {
+  const v = telemetry.value && telemetry.value[m.value]
+  return v != null ? v.toFixed(m.decimals) : '—'
+}
+
+// OWM icon codes (e.g. "04n") map to a hosted image; drop the raw code from the UI.
+function weatherIconUrl(icon) {
+  return icon ? `https://openweathermap.org/img/wn/${icon}@2x.png` : ''
+}
 </script>
 
 <template>
@@ -219,13 +229,21 @@ const metrics = [
               stale
             </span>
           </CardTitle>
-          <CardDescription>
-            {{ weather.description || 'Current conditions' }}
-            <span v-if="weather.icon" class="ml-1">({{ weather.icon }})</span>
+          <CardDescription class="flex items-center gap-2">
+            <img
+              v-if="weather.icon"
+              :src="weatherIconUrl(weather.icon)"
+              :alt="weather.description || 'weather icon'"
+              class="size-8"
+            />
+            <span>{{ weather.description || 'Current conditions' }}</span>
+            <span v-if="weather.station_name" class="text-muted-foreground">
+              · {{ weather.station_name }}
+            </span>
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <div class="grid grid-cols-2 gap-4 md:grid-cols-5">
             <div>
               <p class="text-sm text-muted-foreground">Temperature</p>
               <p class="text-2xl font-bold">
@@ -245,12 +263,15 @@ const metrics = [
               </p>
             </div>
             <div>
-              <p class="text-sm text-muted-foreground">Wind / Clouds</p>
+              <p class="text-sm text-muted-foreground">Wind</p>
               <p class="text-2xl font-bold">
                 {{ weather.wind_speed_mps != null ? weather.wind_speed_mps.toFixed(1) : '—' }} m/s
-                <span class="text-base font-normal text-muted-foreground">
-                  · {{ weather.cloud_pct != null ? weather.cloud_pct : '—' }}%
-                </span>
+              </p>
+            </div>
+            <div>
+              <p class="text-sm text-muted-foreground">Cloud cover</p>
+              <p class="text-2xl font-bold">
+                {{ weather.cloud_pct != null ? weather.cloud_pct : '—' }} %
               </p>
             </div>
           </div>
@@ -260,23 +281,26 @@ const metrics = [
         </CardContent>
       </Card>
 
-      <!-- Metric cards -->
-      <div class="grid grid-cols-2 gap-4 md:grid-cols-3">
-        <Card v-for="m in metrics" :key="m.value">
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <component :is="m.icon" class="size-4" />
-              {{ m.label }}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p class="text-3xl font-bold">
-              {{ telemetry && telemetry[m.value] != null ? telemetry[m.value].toFixed(1) : '—' }}
-              <span class="text-base font-normal text-muted-foreground">{{ m.unit }}</span>
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      <!-- Basement conditions (merged metric card) -->
+      <Card v-if="telemetry">
+        <CardHeader>
+          <CardTitle class="flex items-center gap-2">
+            <Home class="text-primary" />
+            Basement conditions
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div class="grid grid-cols-2 gap-4 md:grid-cols-5">
+            <div v-for="m in metrics" :key="m.value">
+              <p class="text-sm text-muted-foreground">{{ m.label }}</p>
+              <p class="text-2xl font-bold">
+                {{ metricValue(m) }}
+                <span class="text-base font-normal text-muted-foreground">{{ m.unit }}</span>
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <!-- History chart -->
       <Card>

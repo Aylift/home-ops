@@ -177,6 +177,8 @@ class WeatherService:
             "icon": weather.get("icon", ""),
             "wind_speed_mps": wind.get("speed"),
             "cloud_pct": clouds.get("all"),
+            # OWM returns the nearest locality name for the queried coordinates.
+            "station_name": raw.get("name") or None,
             "fetched_at": datetime.now(timezone.utc),
             "observed_at": observed_at,
         }
