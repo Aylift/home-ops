@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, onUnmounted, ref, watch } from 'vue'
-import { RefreshCw, Fan, Thermometer, Droplets, Gauge, Wind, History, Activity } from '@lucide/vue'
+import { RefreshCw, Fan, Thermometer, Droplets, Gauge, Wind, History, Activity, CloudSun } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -19,6 +19,7 @@ const actions = ref([])
 const nodes = ref([])
 const history = ref([])
 const status = ref(null)
+const weather = ref(null)
 const error = ref('')
 const loading = ref(false)
 const historyLoading = ref(false)
@@ -46,6 +47,19 @@ async function fetchStatus() {
     status.value = await res.json()
   } catch (e) {
     console.warn('Failed to fetch node status:', e)
+  }
+}
+
+// Current outside weather (backend is the single weather authority). Optional:
+// 404 when weather is disabled, so a failure must not break the dashboard.
+async function fetchWeather() {
+  try {
+    const res = await fetch(`${API}/api/weather`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    weather.value = await res.json()
+  } catch (e) {
+    weather.value = null
+    console.warn('Failed to fetch weather:', e)
   }
 }
 
@@ -91,12 +105,14 @@ onMounted(() => {
   fetchNodes()
   fetchLatest()
   fetchStatus()
+  fetchWeather()
   fetchHistory()
   // Device POSTs telemetry every 5 min (LOOP_INTERVAL). Poll every 30s so the
   // dashboard picks up a new sample promptly without hammering the backend.
   timer = setInterval(() => {
     fetchLatest()
     fetchStatus()
+    fetchWeather()
   }, 30000)
 })
 onUnmounted(() => clearInterval(timer))
@@ -188,6 +204,60 @@ const metrics = [
           </CardTitle>
           <CardDescription>{{ telemetry.mode }}</CardDescription>
         </CardHeader>
+      </Card>
+
+      <!-- Outside weather (optional; hidden when backend weather is disabled) -->
+      <Card v-if="weather">
+        <CardHeader>
+          <CardTitle class="flex items-center gap-2">
+            <CloudSun class="text-primary" />
+            Outside weather
+            <span
+              v-if="weather.stale"
+              class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600"
+            >
+              stale
+            </span>
+          </CardTitle>
+          <CardDescription>
+            {{ weather.description || 'Current conditions' }}
+            <span v-if="weather.icon" class="ml-1">({{ weather.icon }})</span>
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <div>
+              <p class="text-sm text-muted-foreground">Temperature</p>
+              <p class="text-2xl font-bold">
+                {{ weather.temperature_c != null ? weather.temperature_c.toFixed(1) : '—' }} °C
+              </p>
+            </div>
+            <div>
+              <p class="text-sm text-muted-foreground">Humidity</p>
+              <p class="text-2xl font-bold">
+                {{ weather.relative_humidity_pct != null ? weather.relative_humidity_pct.toFixed(0) : '—' }} %
+              </p>
+            </div>
+            <div>
+              <p class="text-sm text-muted-foreground">AH outside</p>
+              <p class="text-2xl font-bold">
+                {{ weather.absolute_humidity_g_m3 != null ? weather.absolute_humidity_g_m3.toFixed(1) : '—' }} g/m³
+              </p>
+            </div>
+            <div>
+              <p class="text-sm text-muted-foreground">Wind / Clouds</p>
+              <p class="text-2xl font-bold">
+                {{ weather.wind_speed_mps != null ? weather.wind_speed_mps.toFixed(1) : '—' }} m/s
+                <span class="text-base font-normal text-muted-foreground">
+                  · {{ weather.cloud_pct != null ? weather.cloud_pct : '—' }}%
+                </span>
+              </p>
+            </div>
+          </div>
+          <p class="mt-3 text-xs text-muted-foreground">
+            Observed {{ fmtTime(weather.observed_at) }} · fetched {{ fmtTime(weather.fetched_at) }}
+          </p>
+        </CardContent>
       </Card>
 
       <!-- Metric cards -->

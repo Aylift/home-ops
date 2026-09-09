@@ -12,14 +12,9 @@ PASSWORD = ""
 # GATEWAY = "192.168.1.1"
 # DNS = "8.8.8.8"
 
-# --- Weather API ---
-API_KEY = ""
-# Coordinates (lat/lon) for the closest weather to home - more precise than a
-# city name. Fill in your own values.
-LAT = ""
-LON = ""
-
 # --- Dashboard Backend ---
+# The backend is the single weather authority (it holds the OWM key/coords).
+# The device reads outside weather from the backend's /api/weather/current.
 DASHBOARD_URL = ""
 # Unique node identifier for this device (must exist in the backend node registry).
 NODE_ID = "basement"

@@ -73,3 +73,28 @@ class NodeStatusOut(BaseModel):
     alive: bool
     last_seen_at: Optional[datetime] = None
     seconds_since_seen: Optional[int] = None
+
+
+# --- Weather ---
+# Canonical, self-describing weather model. Field names embed units/meaning so
+# consumers (Vue dashboard, ESP32) never need to know OWM's response shape.
+class WeatherOut(BaseModel):
+    temperature_c: float
+    relative_humidity_pct: float
+    absolute_humidity_g_m3: float
+    description: str
+    icon: str
+    wind_speed_mps: Optional[float] = None
+    cloud_pct: Optional[int] = None
+    fetched_at: datetime
+    observed_at: Optional[datetime] = None
+    stale: bool
+
+
+# Minimal projection for the ESP32 (smaller payload for MicroPython parsing).
+class WeatherCurrentOut(BaseModel):
+    temperature_c: float
+    relative_humidity_pct: float
+    absolute_humidity_g_m3: float
+    fetched_at: datetime
+    stale: bool

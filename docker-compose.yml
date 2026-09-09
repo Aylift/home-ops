@@ -22,6 +22,14 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-homeops}:${POSTGRES_PASSWORD:-homeops}@db:5432/${POSTGRES_DB:-homeops}
+      # Weather (backend is the single weather authority). Values come from the
+      # repo-root .env; weather stays disabled unless WEATHER_ENABLED=true.
+      WEATHER_ENABLED: ${WEATHER_ENABLED:-false}
+      OWM_API_KEY: ${OWM_API_KEY:-}
+      OWM_LAT: ${OWM_LAT:-}
+      OWM_LON: ${OWM_LON:-}
+      WEATHER_CACHE_TTL: ${WEATHER_CACHE_TTL:-600}
+      WEATHER_MAX_STALE: ${WEATHER_MAX_STALE:-21600}
     ports:
       - "8001:8001"
     depends_on:

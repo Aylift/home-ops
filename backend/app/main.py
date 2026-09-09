@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,11 +16,15 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.database import engine
-from app.routers import events, nodes, telemetry
+from app.routers import events, nodes, telemetry, weather
+from app.services.weather import weather_service
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # One app-level HTTP client reused by the weather service; closed on shutdown.
+    if settings.weather_enabled:
+        weather_service.set_client(httpx.AsyncClient(timeout=10))
     yield
     engine.dispose()
 
@@ -38,6 +43,7 @@ app.add_middleware(
 app.include_router(telemetry.router)
 app.include_router(events.router)
 app.include_router(nodes.router)
+app.include_router(weather.router)
 
 
 @app.exception_handler(RequestValidationError)

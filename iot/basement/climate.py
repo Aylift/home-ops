@@ -7,12 +7,10 @@ import ntptime
 import config
 
 # --- WEATHER CONFIG ---
-# Query by coordinates (lat/lon) for the closest weather to home instead of a
-# city name ~30km away. OWM returns the nearest grid point to these coords.
-API_KEY = config.API_KEY
-LAT = config.LAT
-LON = config.LON
-WEATHER_URL = f"http://api.openweathermap.org/data/2.5/weather?lat={LAT}&lon={LON}&appid={API_KEY}&units=metric"
+# The backend is the single weather authority: it fetches OpenWeatherMap once,
+# caches it, and serves the normalized result to every ESP32 + the dashboard.
+# This device just reads the backend's /api/weather/current projection, so no
+# OWM API key or coordinates live on the device anymore.
 
 # --- CLIMATE CONFIG ---
 THRESHOLD_ON = 60.0      # Fan turn-on threshold
@@ -33,6 +31,9 @@ HEARTBEAT_INTERVAL = LOOP_INTERVAL
 ENABLE_DASHBOARD = True
 DASHBOARD_URL = config.DASHBOARD_URL
 NODE_ID = config.NODE_ID
+# Weather endpoint on the same backend. DASHBOARD_URL points at the telemetry
+# POST (…/api/telemetry); swap that suffix for the weather projection endpoint.
+WEATHER_URL = DASHBOARD_URL.replace("/api/telemetry", "/api/weather/current")
 
 
 def calculate_ah(temp, rh):
@@ -44,20 +45,28 @@ def calculate_ah(temp, rh):
 
 
 def fetch_external_ah():
-    """Fetch weather from API. Returns value or None on error."""
+    """Fetch outside absolute humidity from the backend weather endpoint.
+
+    Returns the AH value (g/m3) or None on error. The backend computes AH from
+    OWM temp/RH, so this device only reads the ready-made
+    `absolute_humidity_g_m3` field. A 404 (weather disabled) or 503
+    (unavailable) returns None, which drops the device into GUARD mode.
+    """
     try:
         response = urequests.get(WEATHER_URL)
+        status = response.status_code
         data = response.json()
         response.close()
 
-        if 'main' not in data:
-            print(f"\n[API REJECTED] Missing 'main' key (likely 401).")
+        if status != 200 or 'absolute_humidity_g_m3' not in data:
+            print(f"\n[API REJECTED] Weather endpoint status {status}.")
             return None
 
-        ext_temp = data['main']['temp']
-        ext_rh = data['main']['humidity']
-        ah = calculate_ah(ext_temp, ext_rh)
-        print(f"\n[API UPDATED] Outside: {ext_temp:.1f}C, {ext_rh}% RH -> {ah:.2f} g/m3")
+        ah = data['absolute_humidity_g_m3']
+        print(
+            f"\n[API UPDATED] Outside: {data.get('temperature_c'):.1f}C, "
+            f"{data.get('relative_humidity_pct'):.0f}% RH -> {ah:.2f} g/m3"
+        )
         return ah
     except Exception as e:
         print(f"\n[API ERROR] Connection exception: {e}")

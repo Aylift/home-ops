@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +23,35 @@ class Settings(BaseSettings):
     # The device POSTs on a 5-min heartbeat, so default to ~2x that to absorb
     # network jitter without false negatives.
     node_alive_seconds: int = 600
+
+    # --- OpenWeatherMap (backend is the single weather authority) ---
+    # Weather is an optional feature. When enabled, the key + coordinates are
+    # required and validated at startup (no silent 0.0 / empty sentinels).
+    weather_enabled: bool = False
+    owm_api_key: str = ""
+    owm_lat: float | None = None
+    owm_lon: float | None = None
+    # Freshness TTL: serve cached weather without touching OWM.
+    weather_cache_ttl: int = 600
+    # Max stale age: beyond this, refuse to serve old weather (503).
+    weather_max_stale: int = 21600
+
+    @model_validator(mode="after")
+    def _validate_weather(self):
+        if self.weather_enabled:
+            missing = []
+            if not self.owm_api_key:
+                missing.append("OWM_API_KEY")
+            if self.owm_lat is None:
+                missing.append("OWM_LAT")
+            if self.owm_lon is None:
+                missing.append("OWM_LON")
+            if missing:
+                raise ValueError(
+                    "Weather is enabled but missing required settings: "
+                    + ", ".join(missing)
+                )
+        return self
 
 
 @lru_cache
