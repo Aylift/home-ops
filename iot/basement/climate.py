@@ -13,7 +13,7 @@ import config
 # OWM API key or coordinates live on the device anymore.
 
 # --- CLIMATE CONFIG ---
-THRESHOLD_ON = 60.0      # Fan turn-on threshold
+THRESHOLD_ON = 55.0      # Fan turn-on threshold (aim ~55% RH)
 THRESHOLD_OFF = 50.0     # Fan turn-off threshold (hysteresis)
 EMERGENCY_RH = 75.0      # Hard flood/failure threshold
 AH_HYSTERESIS = 0.5      # Dead-band (g/m3): fan flips only when AH differs by > this
