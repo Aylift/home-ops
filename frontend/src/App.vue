@@ -136,6 +136,7 @@ onMounted(() => {
     fetchLatest()
     fetchStatus()
     fetchWeather()
+    fetchHistory()
     fetchFanHistory()
   }, 30000)
 })
