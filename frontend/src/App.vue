@@ -1,6 +1,22 @@
 <script setup>
 import { onMounted, onUnmounted, ref, watch } from 'vue'
-import { RefreshCw, Fan, History, Activity, CloudSun, Home } from '@lucide/vue'
+import {
+  RefreshCw,
+  Fan,
+  History,
+  Activity,
+  CloudSun,
+  Home,
+  Droplets,
+  Waves,
+  CloudRain,
+  Sun,
+  Cloud,
+  CloudDrizzle,
+  CloudSnow,
+  CloudLightning,
+  CloudFog,
+} from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -192,13 +208,50 @@ function ahDiff() {
   return t.ah_inside - t.ah_outside
 }
 
-// Climate status from current RH: Good <=60, Medium 60-70, Bad >70.
-function climateStatus() {
-  const rh = telemetry.value?.humidity
+// Humidity status from RH: Dry <50 (green), Humid 50-70 (amber), Wet >70 (red).
+// Returns label + tailwind classes + lucide icon component.
+function humidityStatus(rh) {
   if (rh == null) return null
-  if (rh <= 60) return { label: 'Good', color: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-500/15' }
-  if (rh <= 70) return { label: 'Medium', color: 'bg-amber-500', text: 'text-amber-600', bg: 'bg-amber-500/15' }
-  return { label: 'Bad', color: 'bg-red-500', text: 'text-red-600', bg: 'bg-red-500/15' }
+  if (rh < 50)
+    return {
+      label: 'Dry',
+      icon: Droplets,
+      color: 'bg-emerald-500',
+      text: 'text-emerald-600',
+      bg: 'bg-emerald-500/15',
+    }
+  if (rh <= 70)
+    return {
+      label: 'Humid',
+      icon: Waves,
+      color: 'bg-amber-500',
+      text: 'text-amber-600',
+      bg: 'bg-amber-500/15',
+    }
+  return {
+    label: 'Wet',
+    icon: CloudRain,
+    color: 'bg-red-500',
+    text: 'text-red-600',
+    bg: 'bg-red-500/15',
+  }
+}
+
+// Map an OWM icon code to a lucide icon + status color, using the same palette
+// as the humidity statuses: clear -> green (dry), clouds -> amber (humid),
+// rain/drizzle/thunder/snow -> red (wet).
+function weatherStatus(icon) {
+  if (!icon) return null
+  const code = icon.slice(0, 2)
+  if (code === '01') return { icon: Sun, text: 'text-emerald-600' }
+  if (code === '02') return { icon: CloudSun, text: 'text-amber-600' }
+  if (code === '03' || code === '04') return { icon: Cloud, text: 'text-amber-600' }
+  if (code === '09') return { icon: CloudDrizzle, text: 'text-red-600' }
+  if (code === '10') return { icon: CloudRain, text: 'text-red-600' }
+  if (code === '11') return { icon: CloudLightning, text: 'text-red-600' }
+  if (code === '13') return { icon: CloudSnow, text: 'text-red-600' }
+  if (code === '50') return { icon: CloudFog, text: 'text-amber-600' }
+  return { icon: Cloud, text: 'text-amber-600' }
 }
 
 // Fan-on time over the past 24h, estimated from fan_active samples.
@@ -219,10 +272,6 @@ function fanRuntime() {
   return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
-// OWM icon codes (e.g. "04n") map to a hosted image; drop the raw code from the UI.
-function weatherIconUrl(icon) {
-  return icon ? `https://openweathermap.org/img/wn/${icon}@2x.png` : ''
-}
 </script>
 
 <template>
@@ -274,14 +323,6 @@ function weatherIconUrl(icon) {
           <CardTitle class="flex items-center gap-2">
             <Fan :class="telemetry.fan_active ? 'text-primary' : 'text-muted-foreground'" />
             Fan {{ telemetry.fan_active ? 'ON' : 'OFF' }}
-            <span
-              v-if="climateStatus()"
-              class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
-              :class="climateStatus().bg + ' ' + climateStatus().text"
-            >
-              <span class="size-2 rounded-full" :class="climateStatus().color"></span>
-              {{ climateStatus().label }} RH {{ telemetry.humidity != null ? telemetry.humidity.toFixed(0) : '—' }}%
-            </span>
           </CardTitle>
           <CardDescription class="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>{{ telemetry.mode }}</span>
@@ -309,11 +350,11 @@ function weatherIconUrl(icon) {
             </span>
           </CardTitle>
           <CardDescription class="flex items-center gap-2">
-            <img
-              v-if="weather.icon"
-              :src="weatherIconUrl(weather.icon)"
-              :alt="weather.description || 'weather icon'"
-              class="size-8"
+            <component
+              v-if="weatherStatus(weather.icon)"
+              :is="weatherStatus(weather.icon).icon"
+              class="size-6"
+              :class="weatherStatus(weather.icon).text"
             />
             <span>{{ weather.description || 'Current conditions' }}</span>
             <span v-if="weather.station_name" class="text-muted-foreground">
@@ -367,6 +408,18 @@ function weatherIconUrl(icon) {
             <Home class="text-primary" />
             Basement conditions
           </CardTitle>
+          <CardDescription class="flex items-center gap-2">
+            <component
+              v-if="humidityStatus(telemetry.humidity)"
+              :is="humidityStatus(telemetry.humidity).icon"
+              class="size-6"
+              :class="humidityStatus(telemetry.humidity).text"
+            />
+            <span v-if="humidityStatus(telemetry.humidity)">
+              {{ humidityStatus(telemetry.humidity).label }}
+              {{ telemetry.humidity != null ? telemetry.humidity.toFixed(0) : '—' }}% RH
+            </span>
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div class="grid grid-cols-2 gap-4 md:grid-cols-5">
