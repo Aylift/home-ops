@@ -19,9 +19,25 @@ const SERIES = [
   { key: 'ah_outside', label: 'AH out', color: '#8b5cf6', scale: 'ah', unit: 'g/m³' },
 ]
 
+// Device POSTs every 5 min; a gap > 2x that means the backend/device was down.
+// Insert a null sentinel row so uPlot breaks the line instead of drawing a
+// straight segment across the outage.
+const GAP_SECONDS = 600
+
 function buildData(rows) {
-  const times = rows.map((r) => new Date(r.timestamp).getTime() / 1000)
-  const cols = SERIES.map((s) => rows.map((r) => r[s.key] ?? null))
+  const times = []
+  const cols = SERIES.map(() => [])
+  let prev = null
+  for (const r of rows) {
+    const t = new Date(r.timestamp).getTime() / 1000
+    if (prev != null && t - prev > GAP_SECONDS) {
+      times.push(prev + 1)
+      for (const c of cols) c.push(null)
+    }
+    times.push(t)
+    SERIES.forEach((s, i) => cols[i].push(r[s.key] ?? null))
+    prev = t
+  }
   return [times, ...cols]
 }
 
@@ -77,6 +93,7 @@ function render() {
         stroke: s.color,
         scale: s.scale,
         width: 2,
+        spanGaps: false,
         points: { show: false },
       })),
     ],
