@@ -51,6 +51,23 @@ class Telemetry(Base):
     fan_active: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     mode: Mapped[str | None] = mapped_column(String(64), nullable=True)
     action: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    override_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class FanOverride(Base):
+    """Manual fan override set from the dashboard.
+
+    The device polls this row and forces the fan ON until `expires_at` passes,
+    then resumes its own climate logic. One row per node (upserted).
+    """
+
+    __tablename__ = "fan_overrides"
+
+    node_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class Event(Base):

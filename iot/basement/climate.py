@@ -2,7 +2,6 @@ from machine import Pin, I2C
 import bme280
 import time
 import math
-import socket
 import urequests
 import ntptime
 import config
@@ -10,7 +9,9 @@ import config
 # Hard cap on every HTTP call so a dead backend (PC powered off, no RST to fail
 # fast) can never stall the control loop. Without this the socket connect can
 # block for minutes and the relay stays frozen in its last state.
-socket.setdefaulttimeout(10)
+# NOTE: MicroPython's socket module has no setdefaulttimeout(), so the timeout
+# is passed per-request to urequests instead (see HTTP_TIMEOUT below).
+HTTP_TIMEOUT = 10
 
 # --- WEATHER CONFIG ---
 # The backend is the single weather authority: it fetches OpenWeatherMap once,
@@ -51,6 +52,9 @@ NODE_ID = config.NODE_ID
 # Weather endpoint on the same backend. DASHBOARD_URL points at the telemetry
 # POST (…/api/telemetry); swap that suffix for the weather projection endpoint.
 WEATHER_URL = DASHBOARD_URL.replace("/api/telemetry", "/api/weather/current")
+# Manual fan override set from the dashboard. Polled every cycle; while active
+# the fan is forced ON regardless of the climate decision.
+OVERRIDE_URL = DASHBOARD_URL.replace("/api/telemetry", "/api/fan/override")
 
 
 def calculate_ah(temp, rh):
@@ -59,6 +63,35 @@ def calculate_ah(temp, rh):
     e = es * (rh / 100.0)
     # Corrected multiplier: 216.74 instead of 2.1674 * 1000 to avoid scale errors
     return (e * 216.74) / (273.15 + temp)
+
+
+def fetch_override():
+    """Return the remaining override seconds from the backend, or 0.
+
+    Any failure (backend down, 404, bad JSON) returns 0 so the device simply
+    falls back to its own climate logic — the override is a convenience, never
+    a dependency.
+    """
+    response = None
+    try:
+        response = urequests.get(
+            f"{OVERRIDE_URL}?node_id={NODE_ID}", timeout=HTTP_TIMEOUT
+        )
+        if response.status_code != 200:
+            return 0
+        data = response.json()
+        if not data.get("active"):
+            return 0
+        return int(data.get("remaining_seconds", 0))
+    except Exception as e:
+        print(f"\n[OVERRIDE ERROR] {e}")
+        return 0
+    finally:
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
 
 
 def fetch_external_ah():
@@ -71,7 +104,7 @@ def fetch_external_ah():
     """
     response = None
     try:
-        response = urequests.get(WEATHER_URL)
+        response = urequests.get(WEATHER_URL, timeout=HTTP_TIMEOUT)
         status = response.status_code
         data = response.json()
 
@@ -176,7 +209,9 @@ def send_to_dashboard(payload):
         # and multibyte characters would undercount the length and truncate the JSON.
         body = ujson.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
-        response = urequests.post(DASHBOARD_URL, data=body, headers=headers)
+        response = urequests.post(
+            DASHBOARD_URL, data=body, headers=headers, timeout=HTTP_TIMEOUT
+        )
         print("[DASHBOARD] status:", response.status_code)
     except Exception as e:
         print(f"[DASHBOARD ERROR] Could not send data: {e}")
@@ -239,6 +274,11 @@ def run():
                 else None
             )
 
+            # Manual override from the dashboard: force the fan ON while it has
+            # time left. Polled every cycle so a button press takes effect on
+            # the next wake-up (≤ LOOP_INTERVAL).
+            override_secs = fetch_override()
+
             # Read from basement
             temp = bme.temperature()
             press = bme.pressure()
@@ -252,6 +292,11 @@ def run():
             vent_decision, mode_reason = should_ventilate(
                 temp, hum, usable_ah, fan_on, current_time, last_state_change
             )
+
+            # Override wins over the climate decision.
+            if override_secs > 0:
+                vent_decision = True
+                mode_reason = f"OVERRIDE ({override_secs // 60}m left)"
 
             # Apply decision and track fan state changes.
             if vent_decision != fan_on:
@@ -289,7 +334,8 @@ def run():
                         "ah_outside": round(ext_ah, 2)
                             if ext_ah is not None else None,
                         "fan_active": fan_now,
-                        "mode": mode_reason
+                        "mode": mode_reason,
+                        "override_seconds": override_secs
                     }
 
                     if fan_changed:

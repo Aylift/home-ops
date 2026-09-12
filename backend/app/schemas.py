@@ -18,6 +18,8 @@ class TelemetryIn(BaseModel):
     fan_active: bool
     mode: str
     action: Optional[str] = None
+    # Remaining manual-override seconds reported by the device (0 when none).
+    override_seconds: Optional[int] = None
 
 
 # --- Outbound telemetry (to the dashboard) ---
@@ -35,6 +37,7 @@ class TelemetryOut(BaseModel):
     fan_active: Optional[bool] = None
     mode: Optional[str] = None
     action: Optional[str] = None
+    override_seconds: Optional[int] = None
 
 
 # --- Events ---
@@ -101,3 +104,17 @@ class WeatherCurrentOut(BaseModel):
     absolute_humidity_g_m3: float
     fetched_at: datetime
     stale: bool
+
+
+# --- Fan override ---
+class FanOverrideIn(BaseModel):
+    node_id: str = Field(default="basement", pattern=r"^[a-z0-9_]+$")
+    # Signed minutes to add to the current override window. Negative shortens it.
+    minutes: int = Field(ge=-1440, le=1440)
+
+
+class FanOverrideOut(BaseModel):
+    node_id: str
+    active: bool
+    expires_at: Optional[datetime] = None
+    remaining_seconds: int = 0

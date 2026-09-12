@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   RefreshCw,
   Fan,
@@ -16,6 +16,9 @@ import {
   CloudSnow,
   CloudLightning,
   CloudFog,
+  Minus,
+  Plus,
+  RotateCcw,
 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
@@ -37,6 +40,8 @@ const history = ref([])
 const fanHistory = ref([])
 const status = ref(null)
 const weather = ref(null)
+const override = ref(null)
+const overrideBusy = ref(false)
 const error = ref('')
 const loading = ref(false)
 const historyLoading = ref(false)
@@ -125,6 +130,50 @@ async function fetchHistory() {
   }
 }
 
+// Manual fan override window (set from the dashboard, enforced by the device).
+async function fetchOverride() {
+  try {
+    const res = await fetch(`${API}/api/fan/override?node_id=${nodeId.value}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    override.value = await res.json()
+  } catch (e) {
+    console.warn('Failed to fetch override:', e)
+  }
+}
+
+// Signed minute delta: +10 extends, -10 shortens. The backend clamps to [0, 24h].
+async function adjustOverride(minutes) {
+  overrideBusy.value = true
+  try {
+    const res = await fetch(`${API}/api/fan/override`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ node_id: nodeId.value, minutes }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    override.value = await res.json()
+  } catch (e) {
+    console.warn('Failed to adjust override:', e)
+  } finally {
+    overrideBusy.value = false
+  }
+}
+
+async function resetOverride() {
+  overrideBusy.value = true
+  try {
+    const res = await fetch(`${API}/api/fan/override?node_id=${nodeId.value}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    override.value = await res.json()
+  } catch (e) {
+    console.warn('Failed to reset override:', e)
+  } finally {
+    overrideBusy.value = false
+  }
+}
+
 // Fan runtime always reflects the past 24h, independent of the chart window.
 async function fetchFanHistory() {
   try {
@@ -146,6 +195,7 @@ onMounted(() => {
   fetchWeather()
   fetchHistory()
   fetchFanHistory()
+  fetchOverride()
   // Device POSTs telemetry every 5 min (LOOP_INTERVAL). Poll every 30s so the
   // dashboard picks up a new sample promptly without hammering the backend.
   timer = setInterval(() => {
@@ -154,6 +204,7 @@ onMounted(() => {
     fetchWeather()
     fetchHistory()
     fetchFanHistory()
+    fetchOverride()
   }, 30000)
 })
 onUnmounted(() => clearInterval(timer))
@@ -164,6 +215,7 @@ watch(nodeId, () => {
   fetchStatus()
   fetchHistory()
   fetchFanHistory()
+  fetchOverride()
 })
 
 // Reload history when the time window changes.
@@ -254,6 +306,15 @@ function weatherStatus(icon) {
   return { icon: Cloud, text: 'text-amber-600' }
 }
 
+// Human-readable remaining override window, e.g. "1h 20m" / "35m".
+const overrideLabel = computed(() => {
+  const s = override.value?.remaining_seconds || 0
+  if (s <= 0) return '0m'
+  const h = Math.floor(s / 3600)
+  const m = Math.round((s % 3600) / 60)
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
+})
+
 // Fan-on time over the past 24h, estimated from fan_active samples.
 function fanRuntime() {
   const rows = fanHistory.value || []
@@ -334,6 +395,48 @@ function fanRuntime() {
             </span>
           </CardDescription>
         </CardHeader>
+        <CardContent>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-sm text-muted-foreground">Manual override</span>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="overrideBusy"
+              @click="adjustOverride(-10)"
+            >
+              <Minus />
+              10m
+            </Button>
+            <span
+              class="min-w-20 rounded-md border px-3 py-1 text-center text-sm font-medium tabular-nums"
+              :class="
+                override?.active
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'text-muted-foreground'
+              "
+            >
+              {{ overrideLabel }}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="overrideBusy"
+              @click="adjustOverride(10)"
+            >
+              <Plus />
+              10m
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              :disabled="overrideBusy || !override?.active"
+              @click="resetOverride"
+            >
+              <RotateCcw />
+              Reset
+            </Button>
+          </div>
+        </CardContent>
       </Card>
 
       <!-- Outside weather (optional; hidden when backend weather is disabled) -->

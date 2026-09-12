@@ -43,6 +43,7 @@ def receive_telemetry(payload: TelemetryIn, db: DbDep):
         fan_active=payload.fan_active,
         mode=payload.mode,
         action=payload.action,
+        override_seconds=payload.override_seconds,
     )
     db.add(row)
 

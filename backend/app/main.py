@@ -16,7 +16,7 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.database import engine
-from app.routers import events, nodes, telemetry, weather
+from app.routers import events, fan, nodes, telemetry, weather
 from app.services.weather import weather_service
 
 
@@ -44,6 +44,7 @@ app.include_router(telemetry.router)
 app.include_router(events.router)
 app.include_router(nodes.router)
 app.include_router(weather.router)
+app.include_router(fan.router)
 
 
 @app.exception_handler(RequestValidationError)
