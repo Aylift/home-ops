@@ -2,9 +2,15 @@ from machine import Pin, I2C
 import bme280
 import time
 import math
+import socket
 import urequests
 import ntptime
 import config
+
+# Hard cap on every HTTP call so a dead backend (PC powered off, no RST to fail
+# fast) can never stall the control loop. Without this the socket connect can
+# block for minutes and the relay stays frozen in its last state.
+socket.setdefaulttimeout(10)
 
 # --- WEATHER CONFIG ---
 # The backend is the single weather authority: it fetches OpenWeatherMap once,
@@ -17,6 +23,17 @@ THRESHOLD_ON = 55.0      # Fan turn-on threshold (aim ~55% RH)
 THRESHOLD_OFF = 50.0     # Fan turn-off threshold (hysteresis)
 EMERGENCY_RH = 75.0      # Hard flood/failure threshold
 AH_HYSTERESIS = 0.5      # Dead-band (g/m3): fan flips only when AH differs by > this
+
+# GUARD fallback (backend unreachable): decide on inside RH alone, with a
+# temperature gate. Ventilating a warm, humid basement is safe; a cold one is
+# not (condensation risk), so the fan only runs when it is humid AND warm.
+GUARD_TEMP_MIN = 18.0    # Only ventilate in GUARD when temp is above this (C)
+GUARD_RH_ON = 60.0       # GUARD: turn fan ON above this RH
+GUARD_RH_OFF = 55.0      # GUARD: turn fan OFF below this RH (hysteresis)
+
+# How long a cached outside-AH reading stays usable when the backend is down.
+# 6h covers a PC being powered off overnight without dropping to GUARD.
+EXT_AH_MAX_AGE = 6 * 3600
 
 # --- TIMING ---
 # Authoritative control/sleep cadence. All device timing is derived from this.
@@ -50,13 +67,13 @@ def fetch_external_ah():
     Returns the AH value (g/m3) or None on error. The backend computes AH from
     OWM temp/RH, so this device only reads the ready-made
     `absolute_humidity_g_m3` field. A 404 (weather disabled) or 503
-    (unavailable) returns None, which drops the device into GUARD mode.
+    (unavailable) returns None; the caller keeps the last cached value.
     """
+    response = None
     try:
         response = urequests.get(WEATHER_URL)
         status = response.status_code
         data = response.json()
-        response.close()
 
         if status != 200 or 'absolute_humidity_g_m3' not in data:
             print(f"\n[API REJECTED] Weather endpoint status {status}.")
@@ -71,6 +88,31 @@ def fetch_external_ah():
     except Exception as e:
         print(f"\n[API ERROR] Connection exception: {e}")
         return None
+    finally:
+        # Always close: urequests leaks RAM/sockets otherwise, and a raise in
+        # .json() would otherwise skip the close entirely.
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
+
+
+def _guard_decision(int_temp, int_rh, fan_on):
+    """Fallback when outside AH is unknown (backend down, no fresh cache).
+
+    Decides on inside readings alone: ventilate only when the basement is
+    humid AND warm enough that outside air is unlikely to be colder/wetter
+    (condensation risk). Below GUARD_TEMP_MIN the fan stays OFF.
+    """
+    if int_temp < GUARD_TEMP_MIN:
+        return False, "GUARD (Cold)"
+    if int_rh >= GUARD_RH_ON:
+        return True, "GUARD (Humid)"
+    if int_rh <= GUARD_RH_OFF:
+        return False, "GUARD (Dry)"
+    # Dead-band: hold the current state.
+    return fan_on, "GUARD (Humid)" if fan_on else "GUARD (Dry)"
 
 
 def should_ventilate(int_temp, int_rh, ext_ah_value, fan_on, now, last_state_change):
@@ -83,9 +125,11 @@ def should_ventilate(int_temp, int_rh, ext_ah_value, fan_on, now, last_state_cha
 
     Emergency is AH-aware: high RH alone (e.g. heavy rain) is NOT a flood.
     The fan is only forced ON when outside air is actually drier than inside;
-    if outside is wetter or unknown, ventilating would pull MORE moisture in,
-    so the fan stays OFF. The emergency branch decides immediately (no
-    MIN_OFF_TIME) so a genuine flood is never delayed by anti-cycling.
+    if outside is wetter, ventilating would pull MORE moisture in, so the fan
+    stays OFF. When outside AH is unknown (backend down, no cache) we fall back
+    to the GUARD rule (humid + warm) rather than a hard OFF, so a genuine flood
+    in a warm basement is still ventilated. The emergency branch decides
+    immediately (no MIN_OFF_TIME) so a genuine flood is never delayed.
     """
     int_ah = calculate_ah(int_temp, int_rh)
 
@@ -97,7 +141,8 @@ def should_ventilate(int_temp, int_rh, ext_ah_value, fan_on, now, last_state_cha
             else:
                 return False, "EMERGENCY (Outside wet)"
         else:
-            return False, "EMERGENCY (Outside unknown)"
+            # Unknown outside AH: use the GUARD rule instead of forcing OFF.
+            return _guard_decision(int_temp, int_rh, fan_on)
 
     if int_rh <= THRESHOLD_ON and not fan_on:
         return False, "STANDBY (Normal)"
@@ -118,20 +163,13 @@ def should_ventilate(int_temp, int_rh, ext_ah_value, fan_on, now, last_state_cha
             # Inside the dead-band: hold the current state.
             return fan_on, "API (Outside dry)" if fan_on else "API (Outside wet)"
 
-    # GUARD: API failure, fall back to calendar
-    current_month = time.localtime()[1]
-
-    if time.localtime()[0] <= 2000:
-        return False, "GUARD (No NTP time)"
-
-    if current_month in [11, 12, 1, 2, 3, 4]:
-        return True, "GUARD (Winter)"
-    else:
-        return False, "GUARD (Summer)"
+    # GUARD: backend unreachable and no usable cached outside AH.
+    return _guard_decision(int_temp, int_rh, fan_on)
 
 
 def send_to_dashboard(payload):
     """Send payload to your server and close the socket"""
+    response = None
     try:
         import ujson
         # Encode to UTF-8 bytes - urequests computes Content-Length from len(str),
@@ -140,9 +178,15 @@ def send_to_dashboard(payload):
         headers = {"Content-Type": "application/json"}
         response = urequests.post(DASHBOARD_URL, data=body, headers=headers)
         print("[DASHBOARD] status:", response.status_code)
-        response.close() # Critical: urequests easily exhausts RAM without .close()
     except Exception as e:
         print(f"[DASHBOARD ERROR] Could not send data: {e}")
+    finally:
+        # Critical: urequests easily exhausts RAM without .close().
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
 
 
 def run():
@@ -170,7 +214,8 @@ def run():
     last_state_change = 0    # time.time() of last fan state flip
     last_api_check = 0
     last_heartbeat = 0
-    ext_ah = None
+    ext_ah = None            # Last known-good outside AH (cached across failures)
+    ext_ah_time = 0          # time.time() when ext_ah was last refreshed
 
     print("\n>>> Climate System v3.0 (IoT Edition) ready <<<")
 
@@ -180,8 +225,19 @@ def run():
 
             # Refresh external weather data less frequently than the control loop.
             if last_api_check == 0 or (current_time - last_api_check) >= API_INTERVAL:
-                ext_ah = fetch_external_ah()
+                fresh = fetch_external_ah()
                 last_api_check = current_time
+                if fresh is not None:
+                    ext_ah = fresh
+                    ext_ah_time = current_time
+
+            # Use the cached reading only while it is fresh enough; otherwise
+            # pass None so should_ventilate() falls back to GUARD.
+            usable_ah = (
+                ext_ah
+                if ext_ah is not None and (current_time - ext_ah_time) <= EXT_AH_MAX_AGE
+                else None
+            )
 
             # Read from basement
             temp = bme.temperature()
@@ -194,7 +250,7 @@ def run():
 
             # Decision logic
             vent_decision, mode_reason = should_ventilate(
-                temp, hum, ext_ah, fan_on, current_time, last_state_change
+                temp, hum, usable_ah, fan_on, current_time, last_state_change
             )
 
             # Apply decision and track fan state changes.
