@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useDark, useToggle } from '@vueuse/core'
 import {
   RefreshCw,
   Fan,
@@ -19,6 +20,8 @@ import {
   Minus,
   Plus,
   RotateCcw,
+  Moon,
+  SunMedium,
 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
@@ -32,6 +35,10 @@ import HistoryChart from '@/components/HistoryChart.vue'
 
 // Same-origin when served by the backend; override with VITE_API_URL for dev.
 const API = import.meta.env.VITE_API_URL || ''
+
+// Dark mode: toggles the `dark` class on <html>, persisted to localStorage.
+const isDark = useDark()
+const toggleDark = useToggle(isDark)
 
 const telemetry = ref(null)
 const actions = ref([])
@@ -369,6 +376,10 @@ function fanRuntime() {
             </option>
             <option v-if="!nodes.length" value="basement">basement</option>
           </select>
+          <Button variant="outline" size="icon" aria-label="Toggle theme" @click="toggleDark()">
+            <Moon v-if="!isDark" />
+            <SunMedium v-else />
+          </Button>
           <Button :disabled="loading" @click="fetchLatest">
             <RefreshCw :class="loading ? 'animate-spin' : ''" />
             Refresh
