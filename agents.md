@@ -5,19 +5,25 @@ Read this first before modifying the project. It captures architecture, resolved
 ## Architecture
 
 ```
-ESP32 (MicroPython) ──POST /api/telemetry──▶ FastAPI backend (:8001) ──▶ Vue 3 frontend
-   iot/basement/main.py                          backend/app/main.py        frontend/src
+ESP32 (MicroPython) ──POST /api/telemetry──▶ FastAPI (:8001) ──▶ PostgreSQL
+   iot/basement/main.py                          backend/app            db (volume)
+        │  ▲                                                              │
+        │  └──GET /api/weather/current, /api/fan/override                 │
+        ▼                                                                 ▼
+   FastAPI WeatherService (OWM cache)          Vue 3 dashboard (served by backend)
 ```
 
-- **Device** ([`iot/basement/main.py`](iot/basement/main.py)): reads BME280 (temp/RH/pressure), fetches outside humidity from OpenWeatherMap, decides fan state via [`should_ventilate()`](iot/basement/main.py:68). Control loop sleeps **5 min** (`LOOP_INTERVAL`) between cycles; telemetry POSTs on a **5-min heartbeat** or an **immediate event** (fan state change / emergency entry) to save power.
-- **Backend** ([`backend/app/main.py`](backend/app/main.py)): validates payload with Pydantic `Telemetry`, stores the latest sample in memory, logs it, returns 200. Exposes `GET /api/telemetry/latest` and `GET /api/actions` (rolling log of major events) for the dashboard. Also serves the built frontend (`frontend/dist`) on the same port, so the whole app is reachable at `http://<host-ip>:8001` from any LAN device.
-- **Frontend** ([`frontend/src/App.vue`](frontend/src/App.vue)): shadcn dashboard that polls `GET /api/telemetry/latest` + `GET /api/actions` every 5s and renders fan status, metric cards, and a recent-actions list. Uses a **relative** API URL (same origin) so it works when served by the backend; override with `VITE_API_URL` for dev.
+- **Device** ([`iot/basement/main.py`](iot/basement/main.py)): thin **supervisor** — imports [`climate.py`](iot/basement/climate.py) and retries on transient failures, re-raising `KeyboardInterrupt` so Ctrl-C still drops to the REPL. [`climate.py`](iot/basement/climate.py) reads BME280 (temp/RH/pressure), polls the backend for outside AH, decides fan state via [`should_ventilate()`](iot/basement/climate.py:151), and applies it to the relay. Control loop sleeps **5 min** (`LOOP_INTERVAL`) between cycles; telemetry POSTs on a **5-min heartbeat** or an **immediate event** (fan state change / emergency entry). **No OWM key on the device** — the backend is the single weather authority.
+- **Backend** ([`backend/app/main.py`](backend/app/main.py)): validates payloads with Pydantic, persists telemetry/events to **PostgreSQL** (SQLAlchemy + Alembic), and serves the built frontend (`frontend/dist`) on the same port, so the whole app is reachable at `http://<host-ip>:8001` from any LAN device. Routers: [`telemetry.py`](backend/app/routers/telemetry.py), [`events.py`](backend/app/routers/events.py), [`nodes.py`](backend/app/routers/nodes.py), [`weather.py`](backend/app/routers/weather.py), [`fan.py`](backend/app/routers/fan.py).
+- **WeatherService** ([`backend/app/services/weather.py`](backend/app/services/weather.py)): fetches OpenWeatherMap once, caches the normalized result in memory (TTL + max-stale policy, `asyncio.Lock` anti-stampede), computes AH, and serves both the dashboard (`GET /api/weather`) and the ESP32 (`GET /api/weather/current`). The router stays dumb; all cache/failure logic lives in the service.
+- **Frontend** ([`frontend/src/App.vue`](frontend/src/App.vue)): shadcn dashboard polling telemetry/events/weather/override every 30s; renders fan status, metric cards, weather card, uPlot history chart ([`HistoryChart.vue`](frontend/src/components/HistoryChart.vue)), and a recent-events list. Dark mode via `@vueuse/core` `useDark`. Uses a **relative** API URL (same origin); override with `VITE_API_URL` for dev.
 - **Host tooling** ([`iot/`](iot/)): WebREPL-based scripts to sync/reset/monitor the device.
 
 ## Telemetry payload
 
 ```json
 {
+  "node_id": "basement",
   "timestamp": 841357778.0,
   "temperature": 21.28,
   "humidity": 63.29,
@@ -25,11 +31,19 @@ ESP32 (MicroPython) ──POST /api/telemetry──▶ FastAPI backend (:8001) �
   "ah_inside": 11.78,
   "ah_outside": 10.99,
   "fan_active": true,
-  "mode": "API (Outside dry)"
+  "mode": "API (Outside dry)",
+  "action": null,
+  "override_seconds": 0
 }
 ```
 
-`mode` is one of: `EMERGENCY (Flood)`, `STANDBY (Normal)`, `API (Outside dry)`, `API (Outside wet)`, `GUARD (No NTP time)`, `GUARD (Winter)`, `GUARD (Summer)`.
+`mode` is one of: `EMERGENCY (Flood)`, `EMERGENCY (Outside dry)`, `EMERGENCY (Outside wet)`, `EMERGENCY (Outside unknown)`, `STANDBY (Normal)`, `API (Outside dry)`, `API (Outside wet)`, `GUARD (No NTP time)`, `GUARD (Winter)`, `GUARD (Summer)`, `OVERRIDE (<n>m left)`.
+
+`timestamp` is MicroPython epoch seconds; the backend adds `MICROPY_EPOCH_OFFSET` on ingest. `action` (optional) creates an `events` row. `override_seconds` is the remaining manual-override window the device observed.
+
+## Manual fan override
+
+The dashboard sets a signed minute delta via `POST /api/fan/override` (`{"node_id": "basement", "minutes": 10}`); the device polls `GET /api/fan/override?node_id=basement` every cycle and forces the fan ON while `remaining_seconds > 0`. The backend stores an **absolute `expires_at`** (not a countdown) so the device needs no clock agreement with the backend and a missed poll can't extend the window. `DELETE /api/fan/override` clears it. Cap: 24 h. The override is a **convenience, not a dependency** — [`fetch_override()`](iot/basement/climate.py:68) returns 0 on any failure so the device falls back to its own climate logic.
 
 ## Resolved issues (do not regress)
 
@@ -63,10 +77,10 @@ ws.write(b"import machine\r\nmachine.reset()\r\n", wc.WEBREPL_FRAME_TXT)
 ```
 
 ### 5. main.py didn't auto-start after reboot
-`boot.py` only connected WiFi and started WebREPL — it never launched `main.py`, so after a reset the device sat idle at the REPL prompt. **Fix:** add `import main` at the end of [`boot.py`](iot/basement/boot.py) so the climate loop starts on every boot.
+`boot.py` only connected WiFi and started WebREPL — it never launched `main.py`, so after a reset the device sat idle at the REPL prompt. **Fix:** add `import main` at the end of [`boot.py`](iot/basement/boot.py) so the climate loop starts on every boot. (Superseded by #16 — boot.py no longer imports main; MicroPython auto-runs it.)
 
 ### 6. Power: heartbeat + event override instead of 5s POSTs
-The device originally POSTed telemetry every 5s (~17k requests/day). WiFi TX is the dominant power draw. **Fix:** the control loop still runs every 5s (fan stays responsive), but telemetry only POSTs on a **60s heartbeat** or an **immediate event** (fan state change / emergency) — cutting radio activity ~12x to ~1.5k requests/day. Events carry an `action` field (e.g. `"Fan turned ON"`) that the backend logs.
+The device originally POSTed telemetry every 5s (~17k requests/day). WiFi TX is the dominant power draw. **Fix:** the control loop still runs every 5s (fan stays responsive), but telemetry only POSTs on a **60s heartbeat** or an **immediate event** (fan state change / emergency) — cutting radio activity ~12x to ~1.5k requests/day. Events carry an `action` field (e.g. `"Fan turned ON"`) that the backend logs. (Cadence later unified to 5 min — see #14.)
 
 ### 7. Static IP on the ESP32
 The device uses a **static IP `192.168.1.49`** (outside the router's DHCP range) so it never changes. Configured in [`boot.py`](iot/basement/boot.py) via `station.ifconfig()` and values from [`config.py`](iot/basement/config.py) (`STATIC_IP`/`NETMASK`/`GATEWAY`/`DNS`). **Gotcha:** the interface must be torn down first (`active(False)` → `active(True)` → `disconnect()`) before applying the static tuple, or a stale DHCP lease wins. Also, `machine.reset()` via WebREPL only works if the socket stays open a few seconds after the command so it fully processes — closing immediately can drop the reset. Host tooling defaults (`.env` `ESP_IP`, `check_esp.py`, `soft_reset.py`) now point at `192.168.1.49`.
@@ -111,7 +125,7 @@ After the device cadence change, the dashboard showed **zero requests in dev too
 - **Backend** ([`main.py`](backend/app/main.py:98)): the SPA fallback now returns `index.html` with `Cache-Control: no-cache, no-store, must-revalidate` so a rebuild is picked up on the next normal reload (index.html is the pointer to the current hashed bundle; the hashed JS/CSS assets themselves stay long-cacheable).
 - **Frontend** ([`App.vue`](frontend/src/App.vue:21)): `fetchLatest()` no longer uses `Promise.all` — a failure fetching `/api/actions` can no longer block the telemetry update. Polling interval is 30s (data changes every 5 min, so 30s is responsive without hammering the backend).
 - **Deploy note:** after `npm run build`, restart uvicorn (backend reads `frontend/dist` from disk per-request, but a Python change needs a restart), then hard-refresh (Ctrl+F5) once to clear the stale cached `index.html`.
-- **Gotcha:** restarting the backend clears the in-memory `latest_telemetry`, so `/api/telemetry/latest` returns 404 until the device's next 5-min heartbeat POST repopulates it.
+- **Gotcha:** restarting the backend clears the in-memory `latest_telemetry`, so `/api/telemetry/latest` returns 404 until the device's next 5-min heartbeat POST repopulates it. (Superseded by the Postgres migration — telemetry is now persisted, so a restart no longer loses the latest sample.)
 
 ### 16. Device stuck at `>>>` after soft reset (boot.py watchdog + KeyboardInterrupt)
 After a soft reset the device sat idle at the REPL prompt and never ran the climate loop. **Root cause:** [`boot.py`](iot/basement/boot.py) had a `while True: try: import main; break; except Exception` watchdog. `KeyboardInterrupt` derives from `BaseException`, **not** `Exception`, so the Ctrl-C sent by [`soft_reset.py`](iot/soft_reset.py) propagated through boot.py's `except Exception`, aborting boot.py entirely and leaving the device at `>>>`. MicroPython already auto-executes `main.py` after `boot.py` returns, so the watchdog was both wrong and unnecessary. **Fix (two files):**
@@ -120,6 +134,9 @@ After a soft reset the device sat idle at the REPL prompt and never ran the clim
 
 ### 17. check_esp.py interrupts the running loop (REPL connect = Ctrl-C)
 Connecting to the WebREPL **REPL** sends a Ctrl-C, which interrupts the running climate loop and drops the device to `>>>`. So [`check_esp.py`](iot/check_esp.py) can never observe a live loop — it always kills it first. A `>>>` prompt after running it does **not** mean the device is broken. **To verify the device is running, do NOT touch the REPL:** query the backend instead (`GET /api/telemetry/latest?node_id=basement`) and check the `received_at` timestamp is fresh. If you do run `check_esp.py`, follow up with a `soft_reset.py` to restart the loop.
+
+### 18. MicroPython has no `socket.setdefaulttimeout()` (device crash-loop)
+The device crash-looped with `AttributeError: 'module' object has no attribute 'setdefaulttimeout'` and telemetry froze — MicroPython's `socket` module lacks `setdefaulttimeout()`, so the module-level call raised before the control loop ever started. **Fix in [`climate.py`](iot/basement/climate.py:14):** removed `import socket`/`socket.setdefaulttimeout(10)` and pass `timeout=HTTP_TIMEOUT` per-request to every `urequests.get`/`post` call instead. **Diagnosis tip:** a frozen `received_at` with no backend errors means the device is crash-looping — run [`check_esp.py`](iot/check_esp.py) to see the traceback (then `soft_reset.py`).
 
 ## Gotchas
 
@@ -130,6 +147,8 @@ Connecting to the WebREPL **REPL** sends a Ctrl-C, which interrupts the running 
 - **No Polish anywhere in device code** — comments, logging, and mode strings are all English. Frontend handles display localization.
 - **Device static IP is `192.168.1.49`** — update `.env` `ESP_IP` and the host scripts if it ever changes.
 - **`check_esp.py` interrupts the running loop** — connecting to the WebREPL REPL sends Ctrl-C and drops the device to `>>>`. Never use it to verify a live loop; query `GET /api/telemetry/latest?node_id=basement` instead. If you run it, follow up with `soft_reset.py`.
+- **Deploy = rebuild + migrate + restart:** `cd frontend && npm run build`, then `docker compose up -d --build backend`, then `docker compose exec backend alembic upgrade head`. The backend Dockerfile builds the frontend, so a frontend-only change still needs the backend image rebuilt.
+- **Device `config.py` still carries unused `API_KEY`/`LAT`/`LON`** — leftovers from before the backend became the weather authority. Safe to delete; the device reads weather from `/api/weather/current`.
 
 ## Host tooling reference
 
