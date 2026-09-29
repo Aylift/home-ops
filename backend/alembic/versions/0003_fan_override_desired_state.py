@@ -1,17 +1,20 @@
 """fan_overrides.desired_state
 
-Revision ID: 0003
-Revises: 0002
+Revision ID: 0003_fan_override_desired_state
+Revises: 0002_fan_overrides
 Create Date: 2026-09-29
 """
+
+from typing import Sequence, Union
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0003"
-down_revision = "0002"
-branch_labels = None
-depends_on = None
+# revision identifiers, used by Alembic.
+revision: str = "0003_fan_override_desired_state"
+down_revision: Union[str, None] = "0002_fan_overrides"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
