@@ -66,7 +66,10 @@ def calculate_ah(temp, rh):
 
 
 def fetch_override():
-    """Return the remaining override seconds from the backend, or 0.
+    """Return the signed remaining override seconds from the backend, or 0.
+
+    Positive = force the fan ON, negative = force the fan OFF, 0 = no override.
+    The sign carries the desired state; the magnitude is the remaining window.
 
     Any failure (backend down, 404, bad JSON) returns 0 so the device simply
     falls back to its own climate logic — the override is a convenience, never
@@ -82,7 +85,10 @@ def fetch_override():
         data = response.json()
         if not data.get("active"):
             return 0
-        return int(data.get("remaining_seconds", 0))
+        remaining = int(data.get("remaining_seconds", 0))
+        if remaining <= 0:
+            return 0
+        return remaining if data.get("desired_state") else -remaining
     except Exception as e:
         print(f"\n[OVERRIDE ERROR] {e}")
         return 0
@@ -274,9 +280,10 @@ def run():
                 else None
             )
 
-            # Manual override from the dashboard: force the fan ON while it has
-            # time left. Polled every cycle so a button press takes effect on
-            # the next wake-up (≤ LOOP_INTERVAL).
+            # Manual override from the dashboard: signed seconds. Positive
+            # forces the fan ON, negative forces it OFF, 0 = no override.
+            # Polled every cycle so a button press takes effect on the next
+            # wake-up (≤ LOOP_INTERVAL).
             override_secs = fetch_override()
 
             # Read from basement
@@ -293,10 +300,12 @@ def run():
                 temp, hum, usable_ah, fan_on, current_time, last_state_change
             )
 
-            # Override wins over the climate decision.
-            if override_secs > 0:
-                vent_decision = True
-                mode_reason = f"OVERRIDE ({override_secs // 60}m left)"
+            # Override wins over the climate decision. The sign is the desired
+            # state: positive forces ON, negative forces OFF.
+            if override_secs != 0:
+                vent_decision = override_secs > 0
+                state = "ON" if vent_decision else "OFF"
+                mode_reason = f"OVERRIDE {state} ({abs(override_secs) // 60}m left)"
 
             # Apply decision and track fan state changes.
             if vent_decision != fan_on:

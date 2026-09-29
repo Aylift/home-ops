@@ -148,8 +148,8 @@ async function fetchOverride() {
   }
 }
 
-// Signed minute delta: +10 extends, -10 shortens. The backend clamps to [0, 24h]
-// and clears the override when a negative delta reaches zero.
+// Signed minute window: +10 forces the fan ON for 10m, -10 forces it OFF for
+// 10m. Same sign extends the window; the opposite sign replaces it.
 async function adjustOverride(minutes) {
   overrideBusy.value = true
   try {
@@ -314,13 +314,14 @@ function weatherStatus(icon) {
   return { icon: Cloud, text: 'text-amber-600' }
 }
 
-// Human-readable remaining override window, e.g. "1h 20m" / "35m".
+// Human-readable override, e.g. "ON 1h 20m" / "OFF 35m" / "—".
 const overrideLabel = computed(() => {
   const s = override.value?.remaining_seconds || 0
-  if (s <= 0) return '0m'
+  if (s <= 0) return '—'
   const h = Math.floor(s / 3600)
   const m = Math.round((s % 3600) / 60)
-  return h > 0 ? `${h}h ${m}m` : `${m}m`
+  const dur = h > 0 ? `${h}h ${m}m` : `${m}m`
+  return `${override.value?.desired_state ? 'ON' : 'OFF'} ${dur}`
 })
 
 // Fan-on time over the past 24h, estimated from fan_active samples.
@@ -417,13 +418,15 @@ function fanRuntime() {
               @click="adjustOverride(-10)"
             >
               <Minus />
-              10m
+              Force OFF 10m
             </Button>
             <span
-              class="min-w-20 rounded-md border px-3 py-1 text-center text-sm font-medium tabular-nums"
+              class="min-w-24 rounded-md border px-3 py-1 text-center text-sm font-medium tabular-nums"
               :class="
                 override?.active
-                  ? 'border-primary bg-primary/10 text-primary'
+                  ? override?.desired_state
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-amber-500 bg-amber-500/10 text-amber-600'
                   : 'text-muted-foreground'
               "
             >
@@ -436,7 +439,7 @@ function fanRuntime() {
               @click="adjustOverride(10)"
             >
               <Plus />
-              10m
+              Force ON 10m
             </Button>
             <Button
               variant="ghost"

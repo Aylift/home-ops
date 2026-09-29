@@ -11,6 +11,8 @@ httpx==0.28.1
 idna==3.19
 psycopg[binary]==3.2.9
 pydantic==2.13.5
+pytest==8.3.4
+pytest-asyncio==0.25.2
 pydantic-settings==2.15.0
 pydantic_core==2.46.5
 python-dotenv==1.2.3

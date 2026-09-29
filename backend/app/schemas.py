@@ -109,12 +109,17 @@ class WeatherCurrentOut(BaseModel):
 # --- Fan override ---
 class FanOverrideIn(BaseModel):
     node_id: str = Field(default="basement", pattern=r"^[a-z0-9_]+$")
-    # Signed minutes to add to the current override window. Negative shortens it.
+    # Signed minutes: positive forces the fan ON, negative forces it OFF, for
+    # that many minutes. The sign is the desired state; the magnitude is the
+    # duration. Re-posting the same sign extends the window; the opposite sign
+    # replaces it.
     minutes: int = Field(ge=-1440, le=1440)
 
 
 class FanOverrideOut(BaseModel):
     node_id: str
     active: bool
+    # True = fan forced ON, False = fan forced OFF. None when inactive.
+    desired_state: Optional[bool] = None
     expires_at: Optional[datetime] = None
     remaining_seconds: int = 0

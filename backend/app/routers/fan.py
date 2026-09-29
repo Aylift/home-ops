@@ -1,9 +1,11 @@
 """Manual fan override.
 
-The dashboard sets a signed minute delta; the device polls the resulting
-absolute expiry and forces the fan ON until it passes. Storing an absolute
-expiry (not a countdown) means the device needs no clock agreement with the
-backend and a missed poll can't extend the window.
+The dashboard sets a signed minute window: positive forces the fan ON, negative
+forces it OFF, for that many minutes. The sign is the desired state; the
+magnitude is the duration. The device polls the resulting absolute expiry plus
+`desired_state` and applies it until it passes. Storing an absolute expiry (not
+a countdown) means the device needs no clock agreement with the backend and a
+missed poll can't extend the window.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -34,10 +36,15 @@ def _resolve_node(db: Session, node_id: str) -> Node:
     return node
 
 
+def _as_utc(dt: datetime) -> datetime:
+    # SQLite (tests) drops tzinfo; Postgres keeps it. Normalize to UTC-aware.
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
 def _remaining(row: FanOverride | None) -> int:
     if row is None:
         return 0
-    delta = (row.expires_at - datetime.now(timezone.utc)).total_seconds()
+    delta = (_as_utc(row.expires_at) - datetime.now(timezone.utc)).total_seconds()
     return max(0, int(delta))
 
 
@@ -48,10 +55,12 @@ def get_override(
 ):
     row = db.get(FanOverride, node_id)
     remaining = _remaining(row)
+    active = remaining > 0
     return FanOverrideOut(
         node_id=node_id,
-        active=remaining > 0,
-        expires_at=row.expires_at if row is not None else None,
+        active=active,
+        desired_state=row.desired_state if active and row is not None else None,
+        expires_at=row.expires_at if active and row is not None else None,
         remaining_seconds=remaining,
     )
 
@@ -63,52 +72,42 @@ def set_override(payload: FanOverrideIn, db: DbDep):
     now = datetime.now(timezone.utc)
     row = db.get(FanOverride, payload.node_id)
 
-    # Extend from the current expiry if still active, else from now.
-    base = row.expires_at if row is not None and row.expires_at > now else now
-    expires = base + timedelta(minutes=payload.minutes)
+    # The sign is the desired state; the magnitude is the duration.
+    desired = payload.minutes > 0
+    duration = abs(payload.minutes)
 
-    # Clamp to [now, now + MAX_OVERRIDE_MINUTES]. A negative delta that reaches
-    # zero clears the override outright — otherwise the row would linger with
-    # expires_at == now, and the next +10m would extend from a dead window
-    # instead of starting a fresh one.
+    # Extend from the current expiry only when the desired state is unchanged;
+    # flipping the sign starts a fresh window from now.
+    same_state = (
+        row is not None
+        and row.desired_state == desired
+        and _as_utc(row.expires_at) > now
+    )
+    base = _as_utc(row.expires_at) if same_state else now
+    expires = base + timedelta(minutes=duration)
+
     cap = now + timedelta(minutes=MAX_OVERRIDE_MINUTES)
     if expires > cap:
         expires = cap
 
-    if expires <= now:
-        if row is not None:
-            db.delete(row)
-        db.add(
-            Event(
-                node_id=payload.node_id,
-                timestamp=now,
-                type="action",
-                code="fan_override",
-                message=f"Fan override cleared ({payload.minutes:+d}m)",
-            )
-        )
-        db.commit()
-        return FanOverrideOut(
-            node_id=payload.node_id,
-            active=False,
-            expires_at=None,
-            remaining_seconds=0,
-        )
-
     if row is None:
-        row = FanOverride(node_id=payload.node_id, expires_at=expires)
+        row = FanOverride(
+            node_id=payload.node_id, expires_at=expires, desired_state=desired
+        )
         db.add(row)
     else:
         row.expires_at = expires
+        row.desired_state = desired
         row.updated_at = now
 
+    state = "ON" if desired else "OFF"
     db.add(
         Event(
             node_id=payload.node_id,
             timestamp=now,
             type="action",
             code="fan_override",
-            message=f"Fan override {payload.minutes:+d}m",
+            message=f"Fan override {state} {duration}m",
         )
     )
     db.commit()
@@ -117,6 +116,7 @@ def set_override(payload: FanOverrideIn, db: DbDep):
     return FanOverrideOut(
         node_id=payload.node_id,
         active=remaining > 0,
+        desired_state=desired,
         expires_at=row.expires_at,
         remaining_seconds=remaining,
     )
@@ -140,4 +140,10 @@ def clear_override(
             )
         )
         db.commit()
-    return FanOverrideOut(node_id=node_id, active=False, expires_at=None, remaining_seconds=0)
+    return FanOverrideOut(
+        node_id=node_id,
+        active=False,
+        desired_state=None,
+        expires_at=None,
+        remaining_seconds=0,
+    )
