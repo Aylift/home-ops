@@ -67,13 +67,33 @@ def set_override(payload: FanOverrideIn, db: DbDep):
     base = row.expires_at if row is not None and row.expires_at > now else now
     expires = base + timedelta(minutes=payload.minutes)
 
-    # Clamp to [now, now + MAX_OVERRIDE_MINUTES]; a negative delta past zero
-    # simply clears the override.
-    if expires < now:
-        expires = now
+    # Clamp to [now, now + MAX_OVERRIDE_MINUTES]. A negative delta that reaches
+    # zero clears the override outright — otherwise the row would linger with
+    # expires_at == now, and the next +10m would extend from a dead window
+    # instead of starting a fresh one.
     cap = now + timedelta(minutes=MAX_OVERRIDE_MINUTES)
     if expires > cap:
         expires = cap
+
+    if expires <= now:
+        if row is not None:
+            db.delete(row)
+        db.add(
+            Event(
+                node_id=payload.node_id,
+                timestamp=now,
+                type="action",
+                code="fan_override",
+                message=f"Fan override cleared ({payload.minutes:+d}m)",
+            )
+        )
+        db.commit()
+        return FanOverrideOut(
+            node_id=payload.node_id,
+            active=False,
+            expires_at=None,
+            remaining_seconds=0,
+        )
 
     if row is None:
         row = FanOverride(node_id=payload.node_id, expires_at=expires)

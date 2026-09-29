@@ -148,7 +148,8 @@ async function fetchOverride() {
   }
 }
 
-// Signed minute delta: +10 extends, -10 shortens. The backend clamps to [0, 24h].
+// Signed minute delta: +10 extends, -10 shortens. The backend clamps to [0, 24h]
+// and clears the override when a negative delta reaches zero.
 async function adjustOverride(minutes) {
   overrideBusy.value = true
   try {
