@@ -345,15 +345,15 @@ function fanRuntime() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-background p-6">
-    <div class="mx-auto max-w-6xl space-y-6">
-      <header class="flex items-center justify-between gap-4">
-        <div>
-          <h1 class="flex items-center gap-2 text-2xl font-bold">
-            Climate Dashboard
+  <div class="min-h-screen bg-background p-3 sm:p-6">
+    <div class="mx-auto max-w-6xl space-y-4 sm:space-y-6">
+      <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <div class="min-w-0">
+          <h1 class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xl font-bold sm:text-2xl">
+            <span>Climate Dashboard</span>
             <span
               v-if="status"
-              class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
+              class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
               :class="status.alive ? 'bg-emerald-500/15 text-emerald-600' : 'bg-red-500/15 text-red-600'"
             >
               <span
@@ -367,10 +367,10 @@ function fanRuntime() {
             Last update: {{ fmtTime(telemetry?.timestamp) }}
           </p>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2 sm:gap-3">
           <select
             v-model="nodeId"
-            class="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm sm:flex-none"
             aria-label="Select node"
           >
             <option v-for="n in nodes" :key="n.node_id" :value="n.node_id">
@@ -384,7 +384,7 @@ function fanRuntime() {
           </Button>
           <Button :disabled="loading" @click="fetchLatest">
             <RefreshCw :class="loading ? 'animate-spin' : ''" />
-            Refresh
+            <span class="hidden sm:inline">Refresh</span>
           </Button>
         </div>
       </header>
@@ -409,19 +409,30 @@ function fanRuntime() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div class="flex flex-wrap items-center gap-2">
+          <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <span class="text-sm text-muted-foreground">Manual override</span>
-            <Button
-              variant="outline"
-              size="sm"
-              :disabled="overrideBusy"
-              @click="adjustOverride(-10)"
-            >
-              <Minus />
-              Force OFF 10m
-            </Button>
+            <div class="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+              <Button
+                variant="outline"
+                size="sm"
+                :disabled="overrideBusy"
+                @click="adjustOverride(-10)"
+              >
+                <Minus />
+                Force OFF 10m
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                :disabled="overrideBusy"
+                @click="adjustOverride(10)"
+              >
+                <Plus />
+                Force ON 10m
+              </Button>
+            </div>
             <span
-              class="min-w-24 rounded-md border px-3 py-1 text-center text-sm font-medium tabular-nums"
+              class="rounded-md border px-3 py-1 text-center text-sm font-medium tabular-nums sm:min-w-24"
               :class="
                 override?.active
                   ? override?.desired_state
@@ -432,15 +443,6 @@ function fanRuntime() {
             >
               {{ overrideLabel }}
             </span>
-            <Button
-              variant="outline"
-              size="sm"
-              :disabled="overrideBusy"
-              @click="adjustOverride(10)"
-            >
-              <Plus />
-              Force ON 10m
-            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -481,34 +483,34 @@ function fanRuntime() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div class="grid grid-cols-2 gap-4 md:grid-cols-5">
+          <div class="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-5">
             <div>
-              <p class="text-sm text-muted-foreground">Temperature</p>
-              <p class="text-2xl font-bold">
+              <p class="text-xs text-muted-foreground sm:text-sm">Temperature</p>
+              <p class="text-xl font-bold sm:text-2xl">
                 {{ weather.temperature_c != null ? weather.temperature_c.toFixed(1) : '—' }} °C
               </p>
             </div>
             <div>
-              <p class="text-sm text-muted-foreground">Humidity</p>
-              <p class="text-2xl font-bold">
+              <p class="text-xs text-muted-foreground sm:text-sm">Humidity</p>
+              <p class="text-xl font-bold sm:text-2xl">
                 {{ weather.relative_humidity_pct != null ? weather.relative_humidity_pct.toFixed(0) : '—' }} %
               </p>
             </div>
             <div>
-              <p class="text-sm text-muted-foreground">AH outside</p>
-              <p class="text-2xl font-bold">
+              <p class="text-xs text-muted-foreground sm:text-sm">AH outside</p>
+              <p class="text-xl font-bold sm:text-2xl">
                 {{ weather.absolute_humidity_g_m3 != null ? weather.absolute_humidity_g_m3.toFixed(1) : '—' }} g/m³
               </p>
             </div>
             <div>
-              <p class="text-sm text-muted-foreground">Wind</p>
-              <p class="text-2xl font-bold">
+              <p class="text-xs text-muted-foreground sm:text-sm">Wind</p>
+              <p class="text-xl font-bold sm:text-2xl">
                 {{ weather.wind_speed_mps != null ? weather.wind_speed_mps.toFixed(1) : '—' }} m/s
               </p>
             </div>
             <div>
-              <p class="text-sm text-muted-foreground">Cloud cover</p>
-              <p class="text-2xl font-bold">
+              <p class="text-xs text-muted-foreground sm:text-sm">Cloud cover</p>
+              <p class="text-xl font-bold sm:text-2xl">
                 {{ weather.cloud_pct != null ? weather.cloud_pct : '—' }} %
               </p>
             </div>
@@ -540,12 +542,12 @@ function fanRuntime() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div class="grid grid-cols-2 gap-4 md:grid-cols-5">
+          <div class="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-5">
             <div v-for="m in metrics" :key="m.value">
-              <p class="text-sm text-muted-foreground">{{ m.label }}</p>
-              <p class="text-2xl font-bold">
+              <p class="text-xs text-muted-foreground sm:text-sm">{{ m.label }}</p>
+              <p class="text-xl font-bold sm:text-2xl">
                 {{ metricValue(m) }}
-                <span class="text-base font-normal text-muted-foreground">{{ m.unit }}</span>
+                <span class="text-sm font-normal text-muted-foreground sm:text-base">{{ m.unit }}</span>
               </p>
             </div>
           </div>
@@ -554,12 +556,12 @@ function fanRuntime() {
 
       <!-- History chart -->
       <Card>
-        <CardHeader class="flex flex-row items-center justify-between gap-4">
+        <CardHeader class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <CardTitle class="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <Activity class="size-4" />
             History
           </CardTitle>
-          <div class="flex items-center gap-1">
+          <div class="flex flex-wrap items-center gap-1">
             <button
               v-for="r in ranges"
               :key="r.label"
@@ -600,10 +602,10 @@ function fanRuntime() {
             <li
               v-for="(a, i) in actions"
               :key="i"
-              class="flex items-center justify-between border-b pb-2 text-sm last:border-0 last:pb-0"
+              class="flex items-start justify-between gap-3 border-b pb-2 text-sm last:border-0 last:pb-0"
             >
-              <span>{{ a.message || a.code || a.type }}</span>
-              <span class="text-muted-foreground text-xs">{{ fmtTime(a.timestamp) }}</span>
+              <span class="min-w-0 break-words">{{ a.message || a.code || a.type }}</span>
+              <span class="shrink-0 text-muted-foreground text-xs">{{ fmtTime(a.timestamp) }}</span>
             </li>
           </ul>
           <p v-else class="text-muted-foreground text-sm">No events yet.</p>

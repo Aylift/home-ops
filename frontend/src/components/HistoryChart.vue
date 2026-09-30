@@ -56,6 +56,11 @@ function timeValues(u, ticks) {
   })
 }
 
+// Shorter on phones so the chart doesn't dominate the viewport.
+function chartHeight() {
+  return window.innerWidth < 640 ? 220 : 320
+}
+
 function render() {
   if (!el.value) return
   const rows = props.data || []
@@ -68,7 +73,7 @@ function render() {
 
   const opts = {
     width: el.value.clientWidth,
-    height: 320,
+    height: chartHeight(),
     legend: { show: false }, // custom tooltip instead
     scales: {
       temp: { auto: true },
@@ -144,7 +149,7 @@ function render() {
 }
 
 function resize() {
-  if (plot && el.value) plot.setSize({ width: el.value.clientWidth, height: 320 })
+  if (plot && el.value) plot.setSize({ width: el.value.clientWidth, height: chartHeight() })
 }
 
 onMounted(() => {
