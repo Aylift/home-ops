@@ -1,5 +1,6 @@
 <script setup>
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 
@@ -8,16 +9,19 @@ const props = defineProps({
   data: { type: Array, default: () => [] },
 })
 
+const { t, locale } = useI18n()
+
 const el = ref(null)
 const tip = ref(null)
 let plot = null
 
-const SERIES = [
-  { key: 'temperature', label: 'Temp', color: '#ef4444', scale: 'temp', unit: '°C' },
-  { key: 'humidity', label: 'RH', color: '#3b82f6', scale: 'rh', unit: '%' },
-  { key: 'ah_inside', label: 'AH in', color: '#10b981', scale: 'ah', unit: 'g/m³' },
-  { key: 'ah_outside', label: 'AH out', color: '#8b5cf6', scale: 'ah', unit: 'g/m³' },
-]
+// Labels are resolved from i18n so the chart re-renders on language change.
+const SERIES = computed(() => [
+  { key: 'temperature', label: t('history.series.temp'), color: '#ef4444', scale: 'temp', unit: '°C' },
+  { key: 'humidity', label: t('history.series.rh'), color: '#3b82f6', scale: 'rh', unit: '%' },
+  { key: 'ah_inside', label: t('history.series.ahIn'), color: '#10b981', scale: 'ah', unit: 'g/m³' },
+  { key: 'ah_outside', label: t('history.series.ahOut'), color: '#8b5cf6', scale: 'ah', unit: 'g/m³' },
+])
 
 // Device POSTs every 5 min; a gap > 2x that means the backend/device was down.
 // Insert a null sentinel row so uPlot breaks the line instead of drawing a
@@ -25,18 +29,19 @@ const SERIES = [
 const GAP_SECONDS = 600
 
 function buildData(rows) {
+  const series = SERIES.value
   const times = []
-  const cols = SERIES.map(() => [])
+  const cols = series.map(() => [])
   let prev = null
   for (const r of rows) {
-    const t = new Date(r.timestamp).getTime() / 1000
-    if (prev != null && t - prev > GAP_SECONDS) {
+    const ts = new Date(r.timestamp).getTime() / 1000
+    if (prev != null && ts - prev > GAP_SECONDS) {
       times.push(prev + 1)
       for (const c of cols) c.push(null)
     }
-    times.push(t)
-    SERIES.forEach((s, i) => cols[i].push(r[s.key] ?? null))
-    prev = t
+    times.push(ts)
+    series.forEach((s, i) => cols[i].push(r[s.key] ?? null))
+    prev = ts
   }
   return [times, ...cols]
 }
@@ -93,7 +98,7 @@ function render() {
     ],
     series: [
       {},
-      ...SERIES.map((s) => ({
+      ...SERIES.value.map((s) => ({
         label: s.label,
         stroke: s.color,
         scale: s.scale,
@@ -119,7 +124,7 @@ function render() {
           hour: '2-digit',
           minute: '2-digit',
         })
-        const rows = SERIES.map((s, i) => {
+        const rows = SERIES.value.map((s, i) => {
           const v = u.data[i + 1][idx]
           return v == null
             ? null
@@ -170,6 +175,15 @@ watch(
   () => render(),
   { deep: false }
 )
+
+// Rebuild the plot when the language changes so series labels update.
+watch(locale, () => {
+  if (plot) {
+    plot.destroy()
+    plot = null
+  }
+  render()
+})
 </script>
 
 <template>

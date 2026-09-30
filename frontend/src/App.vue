@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useDark, useToggle } from '@vueuse/core'
 import {
   RefreshCw,
@@ -32,9 +33,16 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import HistoryChart from '@/components/HistoryChart.vue'
+import { setLocale, SUPPORTED_LOCALES } from '@/i18n'
+
+const { t, locale } = useI18n()
 
 // Same-origin when served by the backend; override with VITE_API_URL for dev.
 const API = import.meta.env.VITE_API_URL || ''
+
+function changeLocale(e) {
+  setLocale(e.target.value)
+}
 
 // Dark mode: toggles the `dark` class on <html>, persisted to localStorage.
 const isDark = useDark()
@@ -235,13 +243,13 @@ function fmtTime(ts) {
   return isNaN(d.getTime()) ? '—' : d.toLocaleString()
 }
 
-const metrics = [
-  { label: 'Temperature', value: 'temperature', unit: '°C', decimals: 1 },
-  { label: 'Humidity', value: 'humidity', unit: '%', decimals: 0 },
-  { label: 'AH inside', value: 'ah_inside', unit: 'g/m³', decimals: 1 },
-  { label: 'Dew point', value: 'dew_point', unit: '°C', decimals: 1 },
-  { label: 'Pressure', value: 'pressure', unit: 'hPa', decimals: 1 },
-]
+const metrics = computed(() => [
+  { label: t('metrics.temperature'), value: 'temperature', unit: '°C', decimals: 1 },
+  { label: t('metrics.humidity'), value: 'humidity', unit: '%', decimals: 0 },
+  { label: t('metrics.ahInside'), value: 'ah_inside', unit: 'g/m³', decimals: 1 },
+  { label: t('metrics.dewPoint'), value: 'dew_point', unit: '°C', decimals: 1 },
+  { label: t('metrics.pressure'), value: 'pressure', unit: 'hPa', decimals: 1 },
+])
 
 function metricValue(m) {
   // Dew point is derived (not stored) — compute it from temp + RH.
@@ -274,7 +282,7 @@ function humidityStatus(rh) {
   if (rh == null) return null
   if (rh < 50)
     return {
-      label: 'Dry',
+      label: t('humidity.dry'),
       icon: Droplets,
       color: 'bg-emerald-500',
       text: 'text-emerald-600',
@@ -282,14 +290,14 @@ function humidityStatus(rh) {
     }
   if (rh <= 70)
     return {
-      label: 'Humid',
+      label: t('humidity.humid'),
       icon: Waves,
       color: 'bg-amber-500',
       text: 'text-amber-600',
       bg: 'bg-amber-500/15',
     }
   return {
-    label: 'Wet',
+    label: t('humidity.wet'),
     icon: CloudRain,
     color: 'bg-red-500',
     text: 'text-red-600',
@@ -317,11 +325,11 @@ function weatherStatus(icon) {
 // Human-readable override, e.g. "ON 1h 20m" / "OFF 35m" / "—".
 const overrideLabel = computed(() => {
   const s = override.value?.remaining_seconds || 0
-  if (s <= 0) return '—'
+  if (s <= 0) return t('fan.none')
   const h = Math.floor(s / 3600)
   const m = Math.round((s % 3600) / 60)
   const dur = h > 0 ? `${h}h ${m}m` : `${m}m`
-  return `${override.value?.desired_state ? 'ON' : 'OFF'} ${dur}`
+  return t(override.value?.desired_state ? 'fan.overrideOn' : 'fan.overrideOff', { duration: dur })
 })
 
 // Fan-on time over the past 24h, estimated from fan_active samples.
@@ -350,7 +358,7 @@ function fanRuntime() {
       <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div class="min-w-0">
           <h1 class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xl font-bold sm:text-2xl">
-            <span>Climate Dashboard</span>
+            <span>{{ t('app.title') }}</span>
             <span
               v-if="status"
               class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
@@ -360,57 +368,69 @@ function fanRuntime() {
                 class="size-2 rounded-full"
                 :class="status.alive ? 'bg-emerald-500' : 'bg-red-500'"
               ></span>
-              {{ status.alive ? 'Online' : 'Offline' }}
+              {{ status.alive ? t('app.online') : t('app.offline') }}
             </span>
           </h1>
           <p class="text-muted-foreground text-sm">
-            Last update: {{ fmtTime(telemetry?.timestamp) }}
+            {{ t('app.lastUpdate', { time: fmtTime(telemetry?.timestamp) }) }}
           </p>
         </div>
         <div class="flex items-center gap-2 sm:gap-3">
           <select
             v-model="nodeId"
             class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm sm:flex-none"
-            aria-label="Select node"
+            :aria-label="t('app.selectNode')"
           >
             <option v-for="n in nodes" :key="n.node_id" :value="n.node_id">
               {{ n.name || n.node_id }}
             </option>
             <option v-if="!nodes.length" value="basement">basement</option>
           </select>
-          <Button variant="outline" size="icon" aria-label="Toggle theme" @click="toggleDark()">
+          <select
+            :value="locale"
+            class="h-9 shrink-0 rounded-md border border-input bg-background px-2 text-sm"
+            :aria-label="t('lang.label')"
+            @change="changeLocale"
+          >
+            <option v-for="l in SUPPORTED_LOCALES" :key="l" :value="l">
+              {{ t(`lang.${l}`) }}
+            </option>
+          </select>
+          <Button variant="outline" size="icon" :aria-label="t('app.toggleTheme')" @click="toggleDark()">
             <Moon v-if="!isDark" />
             <SunMedium v-else />
           </Button>
           <Button :disabled="loading" @click="fetchLatest">
             <RefreshCw :class="loading ? 'animate-spin' : ''" />
-            <span class="hidden sm:inline">Refresh</span>
+            <span class="hidden sm:inline">{{ t('app.refresh') }}</span>
           </Button>
         </div>
       </header>
 
-      <p v-if="error" class="text-destructive text-sm">Failed to load: {{ error }}</p>
+      <p v-if="error" class="text-destructive text-sm">
+        {{ t('app.failedToLoad', { error }) }}
+      </p>
 
       <!-- Fan status -->
       <Card v-if="telemetry">
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Fan :class="telemetry.fan_active ? 'text-primary' : 'text-muted-foreground'" />
-            Fan {{ telemetry.fan_active ? 'ON' : 'OFF' }}
+            {{ t('fan.title', { state: telemetry.fan_active ? t('fan.on') : t('fan.off') }) }}
           </CardTitle>
           <CardDescription class="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>{{ telemetry.mode }}</span>
             <span v-if="ahDiff() != null" class="text-muted-foreground">
-              AH diff {{ ahDiff() >= 0 ? '+' : '' }}{{ ahDiff().toFixed(1) }} g/m³
+              {{ t('fan.ahDiff', { value: `${ahDiff() >= 0 ? '+' : ''}${ahDiff().toFixed(1)}` }) }}
             </span>
             <span v-if="fanRuntime()" class="text-muted-foreground">
-              Fan on {{ fanRuntime() }} (last 24h)
+              {{ t('fan.runtime', { duration: fanRuntime() }) }}
             </span>
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-            <span class="text-sm text-muted-foreground">Manual override</span>
+            <span class="text-sm text-muted-foreground">{{ t('fan.manualOverride') }}</span>
             <div class="grid grid-cols-2 gap-2 sm:flex sm:items-center">
               <Button
                 variant="outline"
@@ -419,7 +439,7 @@ function fanRuntime() {
                 @click="adjustOverride(-10)"
               >
                 <Minus />
-                Force OFF 10m
+                {{ t('fan.forceOff') }}
               </Button>
               <Button
                 variant="outline"
@@ -428,7 +448,7 @@ function fanRuntime() {
                 @click="adjustOverride(10)"
               >
                 <Plus />
-                Force ON 10m
+                {{ t('fan.forceOn') }}
               </Button>
             </div>
             <span
@@ -450,7 +470,7 @@ function fanRuntime() {
               @click="resetOverride"
             >
               <RotateCcw />
-              Reset
+              {{ t('fan.reset') }}
             </Button>
           </div>
         </CardContent>
@@ -461,12 +481,12 @@ function fanRuntime() {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <CloudSun class="text-primary" />
-            Outside weather
+            {{ t('weather.title') }}
             <span
               v-if="weather.stale"
               class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600"
             >
-              stale
+              {{ t('weather.stale') }}
             </span>
           </CardTitle>
           <CardDescription class="flex items-center gap-2">
@@ -476,7 +496,7 @@ function fanRuntime() {
               class="size-6"
               :class="weatherStatus(weather.icon).text"
             />
-            <span>{{ weather.description || 'Current conditions' }}</span>
+            <span>{{ weather.description || t('weather.currentConditions') }}</span>
             <span v-if="weather.station_name" class="text-muted-foreground">
               · {{ weather.station_name }}
             </span>
@@ -485,38 +505,38 @@ function fanRuntime() {
         <CardContent>
           <div class="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-5">
             <div>
-              <p class="text-xs text-muted-foreground sm:text-sm">Temperature</p>
+              <p class="text-xs text-muted-foreground sm:text-sm">{{ t('weather.temperature') }}</p>
               <p class="text-xl font-bold sm:text-2xl">
                 {{ weather.temperature_c != null ? weather.temperature_c.toFixed(1) : '—' }} °C
               </p>
             </div>
             <div>
-              <p class="text-xs text-muted-foreground sm:text-sm">Humidity</p>
+              <p class="text-xs text-muted-foreground sm:text-sm">{{ t('weather.humidity') }}</p>
               <p class="text-xl font-bold sm:text-2xl">
                 {{ weather.relative_humidity_pct != null ? weather.relative_humidity_pct.toFixed(0) : '—' }} %
               </p>
             </div>
             <div>
-              <p class="text-xs text-muted-foreground sm:text-sm">AH outside</p>
+              <p class="text-xs text-muted-foreground sm:text-sm">{{ t('weather.ahOutside') }}</p>
               <p class="text-xl font-bold sm:text-2xl">
                 {{ weather.absolute_humidity_g_m3 != null ? weather.absolute_humidity_g_m3.toFixed(1) : '—' }} g/m³
               </p>
             </div>
             <div>
-              <p class="text-xs text-muted-foreground sm:text-sm">Wind</p>
+              <p class="text-xs text-muted-foreground sm:text-sm">{{ t('weather.wind') }}</p>
               <p class="text-xl font-bold sm:text-2xl">
                 {{ weather.wind_speed_mps != null ? weather.wind_speed_mps.toFixed(1) : '—' }} m/s
               </p>
             </div>
             <div>
-              <p class="text-xs text-muted-foreground sm:text-sm">Cloud cover</p>
+              <p class="text-xs text-muted-foreground sm:text-sm">{{ t('weather.cloudCover') }}</p>
               <p class="text-xl font-bold sm:text-2xl">
                 {{ weather.cloud_pct != null ? weather.cloud_pct : '—' }} %
               </p>
             </div>
           </div>
           <p class="mt-3 text-xs text-muted-foreground">
-            Observed {{ fmtTime(weather.observed_at) }} · fetched {{ fmtTime(weather.fetched_at) }}
+            {{ t('weather.observedFetched', { observed: fmtTime(weather.observed_at), fetched: fmtTime(weather.fetched_at) }) }}
           </p>
         </CardContent>
       </Card>
@@ -526,7 +546,7 @@ function fanRuntime() {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Home class="text-primary" />
-            Basement conditions
+            {{ t('basement.title') }}
           </CardTitle>
           <CardDescription class="flex items-center gap-2">
             <component
@@ -536,8 +556,7 @@ function fanRuntime() {
               :class="humidityStatus(telemetry.humidity).text"
             />
             <span v-if="humidityStatus(telemetry.humidity)">
-              {{ humidityStatus(telemetry.humidity).label }}
-              {{ telemetry.humidity != null ? telemetry.humidity.toFixed(0) : '—' }}% RH
+              {{ t('basement.rh', { label: humidityStatus(telemetry.humidity).label, value: telemetry.humidity != null ? telemetry.humidity.toFixed(0) : '—' }) }}
             </span>
           </CardDescription>
         </CardHeader>
@@ -559,7 +578,7 @@ function fanRuntime() {
         <CardHeader class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <CardTitle class="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <Activity class="size-4" />
-            History
+            {{ t('history.title') }}
           </CardTitle>
           <div class="flex flex-wrap items-center gap-1">
             <button
@@ -583,9 +602,9 @@ function fanRuntime() {
                (no teardown/remount flash). Loading text only when no data yet. -->
           <HistoryChart v-if="history.length" :data="history" />
           <p v-else-if="historyLoading" class="text-muted-foreground text-sm">
-            Loading history…
+            {{ t('history.loading') }}
           </p>
-          <p v-else class="text-muted-foreground text-sm">No history in this window yet.</p>
+          <p v-else class="text-muted-foreground text-sm">{{ t('history.empty') }}</p>
         </CardContent>
       </Card>
 
@@ -594,7 +613,7 @@ function fanRuntime() {
         <CardHeader>
           <CardTitle class="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <History class="size-4" />
-            Recent events
+            {{ t('events.title') }}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -608,12 +627,12 @@ function fanRuntime() {
               <span class="shrink-0 text-muted-foreground text-xs">{{ fmtTime(a.timestamp) }}</span>
             </li>
           </ul>
-          <p v-else class="text-muted-foreground text-sm">No events yet.</p>
+          <p v-else class="text-muted-foreground text-sm">{{ t('events.empty') }}</p>
         </CardContent>
       </Card>
 
       <p v-if="!telemetry && !error" class="text-muted-foreground text-sm">
-        Waiting for telemetry…
+        {{ t('app.waiting') }}
       </p>
     </div>
   </div>
