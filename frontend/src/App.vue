@@ -23,6 +23,8 @@ import {
   RotateCcw,
   Moon,
   SunMedium,
+  CalendarOff,
+  Trash2,
 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
@@ -57,6 +59,26 @@ const status = ref(null)
 const weather = ref(null)
 const override = ref(null)
 const overrideBusy = ref(false)
+const schedules = ref([])
+const scheduleBusy = ref(false)
+// New-block form. Empty dates = open-ended; equal times = all-day.
+const newBlock = ref({
+  name: '',
+  start_date: '',
+  end_date: '',
+  start_time: '00:00',
+  end_time: '00:00',
+  days_of_week: 0,
+})
+const DAY_BITS = [
+  { key: 'mon', bit: 1 },
+  { key: 'tue', bit: 2 },
+  { key: 'wed', bit: 4 },
+  { key: 'thu', bit: 8 },
+  { key: 'fri', bit: 16 },
+  { key: 'sat', bit: 32 },
+  { key: 'sun', bit: 64 },
+]
 const error = ref('')
 const loading = ref(false)
 const historyLoading = ref(false)
@@ -190,6 +212,102 @@ async function resetOverride() {
   }
 }
 
+// --- Fan schedule ---
+async function fetchSchedules() {
+  try {
+    const res = await fetch(`${API}/api/fan/schedule?node_id=${nodeId.value}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    schedules.value = await res.json()
+  } catch (e) {
+    console.warn('Failed to fetch schedules:', e)
+  }
+}
+
+function toggleDay(bit) {
+  newBlock.value.days_of_week ^= bit
+}
+
+async function addSchedule() {
+  scheduleBusy.value = true
+  try {
+    const b = newBlock.value
+    const body = {
+      node_id: nodeId.value,
+      name: b.name || t('schedule.namePlaceholder'),
+      start_date: b.start_date || null,
+      end_date: b.end_date || null,
+      start_time: `${b.start_time}:00`,
+      end_time: `${b.end_time}:00`,
+      days_of_week: b.days_of_week,
+      desired_state: false,
+    }
+    const res = await fetch(`${API}/api/fan/schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    newBlock.value = {
+      name: '',
+      start_date: '',
+      end_date: '',
+      start_time: '00:00',
+      end_time: '00:00',
+      days_of_week: 0,
+    }
+    await fetchSchedules()
+    await fetchOverride()
+  } catch (e) {
+    console.warn('Failed to add schedule:', e)
+  } finally {
+    scheduleBusy.value = false
+  }
+}
+
+async function toggleSchedule(s) {
+  scheduleBusy.value = true
+  try {
+    const res = await fetch(`${API}/api/fan/schedule/${s.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !s.enabled }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    await fetchSchedules()
+    await fetchOverride()
+  } catch (e) {
+    console.warn('Failed to toggle schedule:', e)
+  } finally {
+    scheduleBusy.value = false
+  }
+}
+
+async function deleteSchedule(s) {
+  scheduleBusy.value = true
+  try {
+    const res = await fetch(`${API}/api/fan/schedule/${s.id}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    await fetchSchedules()
+    await fetchOverride()
+  } catch (e) {
+    console.warn('Failed to delete schedule:', e)
+  } finally {
+    scheduleBusy.value = false
+  }
+}
+
+// "HH:MM:SS" -> "HH:MM" for <input type="time">.
+function hhmm(v) {
+  return v ? v.slice(0, 5) : ''
+}
+
+function scheduleDays(s) {
+  if (!s.days_of_week) return t('schedule.everyDay')
+  return DAY_BITS.filter((d) => s.days_of_week & d.bit)
+    .map((d) => t(`schedule.daysShort.${d.key}`))
+    .join(', ')
+}
+
 // Fan runtime always reflects the past 24h, independent of the chart window.
 async function fetchFanHistory() {
   try {
@@ -212,6 +330,7 @@ onMounted(() => {
   fetchHistory()
   fetchFanHistory()
   fetchOverride()
+  fetchSchedules()
   // Device POSTs telemetry every 5 min (LOOP_INTERVAL). Poll every 30s so the
   // dashboard picks up a new sample promptly without hammering the backend.
   timer = setInterval(() => {
@@ -221,6 +340,7 @@ onMounted(() => {
     fetchHistory()
     fetchFanHistory()
     fetchOverride()
+    fetchSchedules()
   }, 30000)
 })
 onUnmounted(() => clearInterval(timer))
@@ -232,6 +352,7 @@ watch(nodeId, () => {
   fetchHistory()
   fetchFanHistory()
   fetchOverride()
+  fetchSchedules()
 })
 
 // Reload history when the time window changes.
@@ -329,7 +450,13 @@ const overrideLabel = computed(() => {
   const h = Math.floor(s / 3600)
   const m = Math.round((s % 3600) / 60)
   const dur = h > 0 ? `${h}h ${m}m` : `${m}m`
-  return t(override.value?.desired_state ? 'fan.overrideOn' : 'fan.overrideOff', { duration: dur })
+  const label = t(override.value?.desired_state ? 'fan.overrideOn' : 'fan.overrideOff', {
+    duration: dur,
+  })
+  // Distinguish a schedule-driven block from a manual override.
+  return override.value?.source === 'schedule'
+    ? `${t('schedule.sourceSchedule')} ${label}`
+    : label
 })
 
 // Fan-on time over the past 24h, estimated from fan_active samples.
@@ -471,6 +598,100 @@ function fanRuntime() {
             >
               <RotateCcw />
               {{ t('fan.reset') }}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <!-- Fan schedule: recurring windows that force the fan OFF -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="flex items-center gap-2">
+            <CalendarOff class="text-primary" />
+            {{ t('schedule.title') }}
+          </CardTitle>
+          <CardDescription>{{ t('schedule.description') }}</CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <ul v-if="schedules.length" class="space-y-2">
+            <li
+              v-for="s in schedules"
+              :key="s.id"
+              class="flex flex-wrap items-center justify-between gap-2 border-b pb-2 text-sm last:border-0 last:pb-0"
+            >
+              <div class="min-w-0">
+                <p class="font-medium" :class="s.enabled ? '' : 'text-muted-foreground line-through'">
+                  {{ s.name }}
+                </p>
+                <p class="text-xs text-muted-foreground">
+                  {{ hhmm(s.start_time) }}–{{ hhmm(s.end_time) }} · {{ scheduleDays(s) }}
+                  <span v-if="s.start_date || s.end_date">
+                    · {{ s.start_date || '…' }} → {{ s.end_date || t('schedule.openEnded') }}
+                  </span>
+                </p>
+              </div>
+              <div class="flex items-center gap-1">
+                <Button variant="outline" size="sm" :disabled="scheduleBusy" @click="toggleSchedule(s)">
+                  {{ s.enabled ? t('schedule.enabled') : t('schedule.disabled') }}
+                </Button>
+                <Button variant="ghost" size="icon" :disabled="scheduleBusy" @click="deleteSchedule(s)">
+                  <Trash2 />
+                </Button>
+              </div>
+            </li>
+          </ul>
+          <p v-else class="text-muted-foreground text-sm">{{ t('schedule.empty') }}</p>
+
+          <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <input
+              v-model="newBlock.name"
+              class="col-span-2 h-9 rounded-md border border-input bg-background px-3 text-sm sm:col-span-4"
+              :placeholder="t('schedule.namePlaceholder')"
+              :aria-label="t('schedule.name')"
+            />
+            <input
+              v-model="newBlock.start_date"
+              type="date"
+              class="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              :aria-label="t('schedule.startDate')"
+            />
+            <input
+              v-model="newBlock.end_date"
+              type="date"
+              class="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              :aria-label="t('schedule.endDate')"
+            />
+            <input
+              v-model="newBlock.start_time"
+              type="time"
+              class="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              :aria-label="t('schedule.startTime')"
+            />
+            <input
+              v-model="newBlock.end_time"
+              type="time"
+              class="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              :aria-label="t('schedule.endTime')"
+            />
+          </div>
+          <div class="flex flex-wrap items-center gap-1">
+            <button
+              v-for="d in DAY_BITS"
+              :key="d.key"
+              type="button"
+              class="rounded-md border px-2 py-1 text-xs font-medium transition-colors"
+              :class="
+                newBlock.days_of_week & d.bit
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-transparent text-muted-foreground hover:bg-muted'
+              "
+              @click="toggleDay(d.bit)"
+            >
+              {{ t(`schedule.daysShort.${d.key}`) }}
+            </button>
+            <Button size="sm" class="ml-auto" :disabled="scheduleBusy" @click="addSchedule">
+              <Plus />
+              {{ t('schedule.add') }}
             </Button>
           </div>
         </CardContent>

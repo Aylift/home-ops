@@ -15,9 +15,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
-from app.models import Event, FanOverride, Node
+from app.models import Event, FanOverride, FanSchedule, Node
 from app.schemas import FanOverrideIn, FanOverrideOut
+from app.services.schedule import active_block
 
 router = APIRouter(prefix="/api/fan", tags=["fan"])
 
@@ -53,15 +55,44 @@ def get_override(
     db: DbDep,
     node_id: Annotated[str, Query(pattern=r"^[a-z0-9_]+$")] = "basement",
 ):
+    # Manual override wins over the schedule.
     row = db.get(FanOverride, node_id)
     remaining = _remaining(row)
-    active = remaining > 0
+    if remaining > 0:
+        return FanOverrideOut(
+            node_id=node_id,
+            active=True,
+            desired_state=row.desired_state,
+            expires_at=row.expires_at,
+            remaining_seconds=remaining,
+            source="manual",
+        )
+
+    # No manual override: a schedule block acts as a synthetic override.
+    schedules = db.scalars(
+        select(FanSchedule).where(
+            FanSchedule.node_id == node_id, FanSchedule.enabled.is_(True)
+        )
+    ).all()
+    hit = active_block(schedules, datetime.now(timezone.utc), settings.schedule_tz)
+    if hit is not None:
+        sched, secs = hit
+        return FanOverrideOut(
+            node_id=node_id,
+            active=True,
+            desired_state=sched.desired_state,
+            expires_at=None,
+            remaining_seconds=secs,
+            source="schedule",
+        )
+
     return FanOverrideOut(
         node_id=node_id,
-        active=active,
-        desired_state=row.desired_state if active and row is not None else None,
-        expires_at=row.expires_at if active and row is not None else None,
-        remaining_seconds=remaining,
+        active=False,
+        desired_state=None,
+        expires_at=None,
+        remaining_seconds=0,
+        source=None,
     )
 
 
@@ -119,6 +150,7 @@ def set_override(payload: FanOverrideIn, db: DbDep):
         desired_state=desired,
         expires_at=row.expires_at,
         remaining_seconds=remaining,
+        source="manual",
     )
 
 
@@ -146,4 +178,5 @@ def clear_override(
         desired_state=None,
         expires_at=None,
         remaining_seconds=0,
+        source=None,
     )

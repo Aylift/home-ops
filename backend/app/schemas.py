@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # --- Inbound telemetry (from the device) ---
@@ -123,3 +123,57 @@ class FanOverrideOut(BaseModel):
     desired_state: Optional[bool] = None
     expires_at: Optional[datetime] = None
     remaining_seconds: int = 0
+    # "manual" (dashboard override) or "schedule" (calendar block); None when idle.
+    source: Optional[str] = None
+
+
+# --- Fan schedule ---
+class FanScheduleIn(BaseModel):
+    node_id: str = Field(default="basement", pattern=r"^[a-z0-9_]+$")
+    name: str = Field(min_length=1, max_length=128)
+    enabled: bool = True
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    start_time: time
+    end_time: time
+    days_of_week: int = Field(default=0, ge=0, le=127)
+    desired_state: bool = False
+
+    @model_validator(mode="after")
+    def _check_dates(self):
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("end_date must be >= start_date")
+        return self
+
+
+class FanScheduleUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    enabled: Optional[bool] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    days_of_week: Optional[int] = Field(default=None, ge=0, le=127)
+    desired_state: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def _check_dates(self):
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("end_date must be >= start_date")
+        return self
+
+
+class FanScheduleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    node_id: str
+    name: str
+    enabled: bool
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    start_time: time
+    end_time: time
+    days_of_week: int
+    desired_state: bool
+    created_at: datetime

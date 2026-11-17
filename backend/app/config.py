@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # network jitter without false negatives.
     node_alive_seconds: int = 600
 
+    # Timezone for evaluating fan schedule blocks (local wall-clock windows).
+    schedule_tz: str = "Europe/Warsaw"
+
     # --- OpenWeatherMap (backend is the single weather authority) ---
     # Weather is an optional feature. When enabled, the key + coordinates are
     # required and validated at startup (no silent 0.0 / empty sentinels).

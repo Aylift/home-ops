@@ -8,6 +8,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import httpx
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -16,7 +17,7 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.database import engine
-from app.routers import events, fan, nodes, telemetry, weather
+from app.routers import events, fan, nodes, schedule, telemetry, weather
 from app.services.weather import weather_service
 
 
@@ -45,6 +46,7 @@ app.include_router(events.router)
 app.include_router(nodes.router)
 app.include_router(weather.router)
 app.include_router(fan.router)
+app.include_router(schedule.router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -52,7 +54,9 @@ async def validation_handler(request: Request, exc):
     body = await request.body()
     print(f"[VALIDATION ERROR] body={body!r}")
     print(f"[VALIDATION ERROR] detail={exc.errors()}")
-    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+    # exc.errors() may carry a ValueError in ctx (model_validator), which is not
+    # JSON serializable — coerce via jsonable_encoder.
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
 
 
 @app.get("/health/live")
