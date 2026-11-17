@@ -21,10 +21,12 @@ def _occurrence_bounds(now_local: datetime, s) -> datetime | None:
     today = now_local.date()
 
     if s.start_time == s.end_time:
-        # All-day (24h) window, e.g. 00:00 -> 00:00
+        # All-day (24h) window, e.g. 00:00 -> 00:00. The occurrence runs from
+        # start_time today to start_time tomorrow; the anchor is the day it
+        # started, so a 00:00 window is anchored to today and ends tomorrow.
         anchor_date = today
         end_date = today + timedelta(days=1)
-        end_time = time(0, 0)
+        end_time = s.start_time
     elif s.start_time < s.end_time:
         # Same-day window, e.g. 08:00 -> 18:00. A window ending at 23:59 (the
         # finest HTML time input resolution) is promoted to midnight so there
